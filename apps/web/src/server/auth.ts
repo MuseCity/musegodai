@@ -6,7 +6,8 @@ import { digest, id } from "./crypto";
 import { requireValue, ApiError } from "./errors";
 
 export type Identity =
-  { kind: "human"; userId: string } | { kind: "agent"; tokenHash: string };
+  | { kind: "human"; userId: string }
+  | { kind: "agent"; tokenHash: string; resource?: string };
 export type Actor = {
   account: AccountRow;
   agent: AgentRow | null;
@@ -50,6 +51,7 @@ export function privyVerifier(appId: string, appSecret: string): VerifyHuman {
 export async function identity(
   request: Request,
   verify: VerifyHuman,
+  mcpCredential?: string,
 ): Promise<Identity> {
   const authorization = request.headers.get("authorization");
   requireValue(
@@ -73,8 +75,19 @@ export async function identity(
     "INVALID_CREDENTIAL",
     "Invalid credential.",
   );
-  if (token.startsWith("mca_"))
-    return { kind: "agent", tokenHash: await digest(token) };
+  if (token.startsWith("mco_"))
+    requireValue(
+      token === mcpCredential,
+      403,
+      "MCP_ONLY",
+      "Use this connection through the MCP client, not the REST API.",
+    );
+  if (/^mc[ao]_/.test(token))
+    return {
+      kind: "agent",
+      tokenHash: await digest(token),
+      resource: new URL("/mcp", request.url).href,
+    };
   requireValue(
     !/^mc[ricu]_/.test(token),
     403,
@@ -140,8 +153,11 @@ export async function actor(
     const credential = await db.one<{
       expires_at: Date;
       revoked_at: Date | null;
+      oauth_grant_id: string | null;
+      oauth_version: number | null;
+      oauth_scopes: Scope[] | null;
     }>(
-      "SELECT expires_at,revoked_at FROM musecity.credentials WHERE token_hash=$1 FOR UPDATE",
+      "SELECT expires_at,revoked_at,oauth_grant_id,oauth_version,oauth_scopes FROM musecity.credentials WHERE token_hash=$1 FOR UPDATE",
       [who.tokenHash],
     );
     requireValue(
@@ -158,6 +174,35 @@ export async function actor(
       "CREDENTIAL_REVOKED",
       "This agent was revoked.",
     );
+    if (credential.oauth_grant_id) {
+      const grant = await db.one<{
+        version: number;
+        resource: string;
+        scopes: Scope[];
+        revoked_at: Date | null;
+        expires_at: Date;
+      }>(
+        "SELECT version,resource,scopes,revoked_at,expires_at FROM musecity.oauth_grants WHERE id=$1",
+        [credential.oauth_grant_id],
+      );
+      requireValue(
+        grant &&
+          !grant.revoked_at &&
+          grant.expires_at > new Date() &&
+          grant.version === credential.oauth_version &&
+          grant.resource === who.resource,
+        401,
+        "CREDENTIAL_REVOKED",
+        "Reconnect Musecity in your MCP client.",
+      );
+      agent = {
+        ...agent,
+        scopes: agent.scopes.filter(
+          (s) =>
+            grant.scopes.includes(s) && credential.oauth_scopes!.includes(s),
+        ),
+      };
+    }
     requireValue(
       agent.status === "active" || diagnostic,
       403,

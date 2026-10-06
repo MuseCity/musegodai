@@ -371,6 +371,12 @@ export type AgentView = {
   lastActiveAt: string | null;
   publicVisible: boolean;
   description: string;
+  // Included only in the owner's management responses.
+  oauthConnection?: {
+    clientName: string;
+    status: "authorized" | "connected" | "revoked";
+    connectedAt: string | null;
+  } | null;
 };
 export type ApiFailure = {
   error: { code: string; message: string };

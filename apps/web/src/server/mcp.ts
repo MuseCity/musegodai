@@ -5,9 +5,16 @@ import {
   type CallToolResult,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { workSchema, postSchema, workTypes } from "../shared/contracts";
+import {
+  workSchema,
+  postSchema,
+  workTypes,
+  draftScopes,
+  type Scope,
+} from "../shared/contracts";
 import { requireValue } from "./errors";
 import { boundedBody } from "./media";
+import { challenge } from "./oauth";
 
 type ApiFetch = (request: Request) => Response | Promise<Response>;
 const resourceId = z
@@ -59,6 +66,7 @@ export async function handleMcp(
   request: Request,
   origin: string,
   api: ApiFetch,
+  connected?: () => Promise<void>,
 ): Promise<Response> {
   requireValue(
     new URL(request.url).host === new URL(origin).host,
@@ -79,20 +87,20 @@ export async function handleMcp(
         error: {
           code: "AUTH_REQUIRED",
           message:
-            "Connect with an activated Agent Bearer token. See /agents/mcp.",
+            "Connect Musecity with OAuth in your MCP client. See /agents/mcp.",
         },
       },
       {
         status: 401,
-        headers: { "WWW-Authenticate": 'Bearer realm="musecity"' },
+        headers: { "WWW-Authenticate": challenge(origin) },
       },
     );
   requireValue(
-    /^Bearer mca_[a-zA-Z0-9_-]+$/.test(authorization) &&
+    /^Bearer mc[ao]_[a-zA-Z0-9_-]+$/.test(authorization) &&
       authorization.length < 10000,
     403,
     "SCOPE_DENIED",
-    "MCP requires an activated Agent token. Complete onboarding in /skill.md first.",
+    "Use an OAuth MCP connection or an activated developer Agent credential.",
   );
 
   // Authenticate every protocol request, including discovery and cached tool retries.
@@ -106,7 +114,7 @@ export async function handleMcp(
     if (identity.status === 401)
       identity.headers.set(
         "WWW-Authenticate",
-        'Bearer realm="musecity", error="invalid_token"',
+        challenge(origin, "invalid_token"),
       );
     return identity;
   }
@@ -148,11 +156,28 @@ export async function handleMcp(
             body: body === undefined ? undefined : JSON.stringify(body),
           }),
         );
-        return result(
+        const value = result(
           response.status,
           (await response.json()) as Record<string, unknown>,
           response.headers.get("Retry-After"),
         );
+        const error = (value.structuredContent as { error?: { code: string } })
+          ?.error;
+        if (
+          response.status === 401 ||
+          (response.status === 403 && error?.code === "SCOPE_DENIED")
+        )
+          value._meta = {
+            "mcp/www_authenticate": [
+              challenge(
+                origin,
+                response.status === 401
+                  ? "invalid_token"
+                  : "insufficient_scope",
+              ),
+            ],
+          };
+        return value;
       };
       const query = (
         path: string,
@@ -172,11 +197,38 @@ export async function handleMcp(
         destructive = false,
         idempotent = true,
       ) => {
+        const required: Scope[] =
+          name === "get_agent"
+            ? []
+            : [
+                  "create_creation",
+                  "edit_creation",
+                  "create_media_upload",
+                  "complete_media_upload",
+                ].includes(name)
+              ? ["content:write"]
+              : [
+                    "publish_creation",
+                    "unpublish_creation",
+                    "verify_creation_originality",
+                  ].includes(name)
+                ? ["content:publish"]
+                : ["create_post", "edit_post"].includes(name)
+                  ? ["community:post"]
+                  : name === "reply"
+                    ? ["community:reply"]
+                    : [
+                          "list_agent_notifications",
+                          "mark_agent_notifications_read",
+                        ].includes(name)
+                      ? ["community:notifications"]
+                      : ["content:read"];
         server.registerTool(
           name,
           {
             description,
             inputSchema: z.object(shape).strict(),
+            _meta: { securitySchemes: [{ type: "oauth2", scopes: required }] },
             annotations: {
               readOnlyHint: !write,
               destructiveHint: destructive,
@@ -184,7 +236,22 @@ export async function handleMcp(
               openWorldHint: false,
             },
           },
-          run,
+          async (args) => {
+            const value = await run(args);
+            if (
+              value.isError &&
+              (value.structuredContent as { error?: { code: string } })?.error
+                ?.code === "SCOPE_DENIED"
+            )
+              value._meta = {
+                "mcp/www_authenticate": [
+                  challenge(origin, "insufficient_scope", [
+                    ...new Set([...draftScopes, ...required]),
+                  ]),
+                ],
+              };
+            return value;
+          },
         );
       };
 
@@ -192,7 +259,11 @@ export async function handleMcp(
         "get_agent",
         "Check the connected Agent's owner, current status and granted scopes. Available while paused.",
         {},
-        () => call("/agent"),
+        async () => {
+          const response = await call("/agent");
+          if (!response.isError) await connected?.();
+          return response;
+        },
       );
       register(
         "list_discovery",

@@ -344,13 +344,37 @@ export async function changeAgent(
         >
       )[action],
     ]);
-  if (["revoke", "rotate"].includes(action))
+  if (["revoke", "rotate"].includes(action)) {
     await db.query(
       "UPDATE musecity.credentials SET revoked_at=now() WHERE agent_id=$1 AND revoked_at IS NULL",
       [agentId],
     );
+    await db.query(
+      "UPDATE musecity.oauth_grants SET revoked_at=now() WHERE agent_id=$1",
+      [agentId],
+    );
+  }
   await audit(db, a, "agent." + action, agentId);
-  return action === "rotate"
+  const oauthAgent = await db.one<{ id: string }>(
+    "SELECT id FROM musecity.oauth_grants WHERE agent_id=$1",
+    [agentId],
+  );
+  if (
+    oauthAgent &&
+    (["revoke", "rotate"].includes(action) ||
+      (action === "edit" && input?.scopes))
+  )
+    await db.query(
+      `UPDATE musecity.oauth_requests r SET status='denied' WHERE r.status='approved' AND EXISTS(
+      SELECT 1 FROM musecity.oauth_grants g WHERE g.agent_id=$1 AND g.owner_account_id=r.owner_account_id AND g.client_id=r.client_id)`,
+      [agentId],
+    );
+  return action === "rotate" && !oauthAgent
     ? { agentId, credential: await issueCredential(db, agentId) }
-    : agentView(await ownAgent(db, a, agentId));
+    : {
+        ...agentView(await ownAgent(db, a, agentId)),
+        ...(action === "rotate" && oauthAgent
+          ? { reconnectRequired: true }
+          : {}),
+      };
 }

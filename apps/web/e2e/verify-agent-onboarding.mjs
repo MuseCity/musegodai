@@ -193,14 +193,20 @@ if (command === "baseline") {
     !state.registrationId,
     "Refusing to create a duplicate registration",
   );
-  const invitationToken = input
-    ? readFileSync(resolve(input), "utf8")
-        .trim()
-        .match(/mci_[A-Za-z0-9_-]+/)?.[0]
-    : undefined;
+  const invitationText = input
+    ? readFileSync(resolve(input), "utf8").trim()
+    : "";
+  const invitation = invitationText.startsWith("{")
+    ? JSON.parse(invitationText)
+    : null;
+  const invitationToken =
+    invitation?.invitationToken ??
+    invitationText.match(/mci_[A-Za-z0-9_-]+/)?.[0];
   if (lane === "invited")
     assert.ok(invitationToken, "Invitation file required");
-  const name = `Onboarding QA ${lane} ${run}`;
+  const name = invitation?.name ?? `Onboarding QA ${lane} ${run}`;
+  if (invitation?.requestedScopes)
+    assert.deepEqual(invitation.requestedScopes, scopes);
   if (invitationToken) {
     await api("invitation rejects scope escalation", "/agent-registrations", {
       method: "POST",

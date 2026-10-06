@@ -80,6 +80,8 @@ const listener = getRequestListener(async (request) => {
   const path = new URL(request.url).pathname;
   if (
     path.startsWith("/api/") ||
+    path.startsWith("/oauth/") ||
+    path.startsWith("/.well-known/") ||
     path.startsWith("/media/") ||
     path.startsWith("/sitemaps/") ||
     [

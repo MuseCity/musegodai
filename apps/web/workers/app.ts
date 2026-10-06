@@ -14,6 +14,8 @@ export default {
     const path = new URL(request.url).pathname;
     if (
       path.startsWith("/api/") ||
+      path.startsWith("/oauth/") ||
+      path.startsWith("/.well-known/") ||
       path.startsWith("/media/") ||
       path.startsWith("/sitemaps/") ||
       [
@@ -34,7 +36,16 @@ export default {
     const response = await handler(request, context);
     response.headers.set("Cache-Control", "private, no-store");
     response.headers.set("X-Content-Type-Options", "nosniff");
-    response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+    response.headers.set(
+      "Referrer-Policy",
+      path === "/agents/connect"
+        ? "no-referrer"
+        : "strict-origin-when-cross-origin",
+    );
+    if (path === "/agents/connect") {
+      response.headers.set("X-Frame-Options", "DENY");
+      response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+    }
     return response;
   },
 } satisfies ExportedHandler<Env>;

@@ -83,9 +83,9 @@ try {
   const html = await (await fetch(origin + "/agents")).text();
   for (const text of [
     "Agent Onboarding",
-    "Your agent starts",
-    "REST API",
-    "MCP client",
+    "Connect from your AI client",
+    "Connect with OAuth",
+    "Developer setup",
   ])
     assert.ok(html.includes(text));
   assert.ok(html.includes('content="index, follow, max-image-preview:large"'));
@@ -93,7 +93,7 @@ try {
   browser("open", origin + "/agents");
   browser("snapshot", "-i");
   wait(
-    "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Sign in to connect an agent' && !b.disabled)",
+    "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Sign in to manage agents' && !b.disabled)",
   );
   assert.equal(
     evaluate(
@@ -102,9 +102,9 @@ try {
     "Agent Onboarding",
   );
   assert.equal(evaluate("document.querySelectorAll('h1').length"), 1);
-  click("Copy", "document.querySelector('#agent-start .agent-copy')");
+  click("Copy", "document.querySelector('#connect .agent-copy')");
   wait(
-    "document.querySelector('#agent-start [role=status]').textContent.length > 0",
+    "document.querySelector('#connect [role=status]').textContent.length > 0",
   );
   checks.push(
     "anonymous SSR, active navbar, public guidance and copy feedback",
@@ -128,9 +128,9 @@ try {
     "four primary tabs and the onboarding text link visible without overflow at 320, 390, 768, 1024, 1101 and 1440 pixels",
   );
   browser("set", "viewport", "390", "844");
-  click("Sign in to connect an agent");
+  click("Sign in to manage agents");
   wait(
-    "!![...document.querySelectorAll('button')].find(b=>b.textContent==='+ Invite an agent')",
+    "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Create developer invitation')",
   );
   for (const width of [1440, 1321, 1281, 1101, 768, 390, 320]) {
     browser("set", "viewport", String(width), "900");
@@ -140,7 +140,10 @@ try {
     );
   }
   browser("set", "viewport", "390", "844");
-  click("+ Invite an agent");
+  evaluate(
+    "[...document.querySelectorAll('#your-agents details')].find(d=>d.querySelector('summary')?.textContent==='Developer setup · manual credentials').open=true",
+  );
+  click("Create developer invitation");
   browser("snapshot", "-i");
   assert.equal(
     evaluate(
@@ -164,7 +167,11 @@ try {
   const instruction = evaluate(
     "document.querySelector('dialog .secret').textContent",
   );
-  const invitationToken = instruction.match(/invitationToken (\S+)/)[1];
+  const invitation = JSON.parse(instruction);
+  const invitationToken = invitation.invitationToken;
+  assert.equal(invitation.name, name);
+  assert.deepEqual(invitation.requestedScopes, scopes);
+  assert.ok(invitationToken.startsWith("mci_"));
   closeDialog();
   const registration = await post(
     "/agent-registrations",
@@ -188,10 +195,10 @@ try {
     "draft-only invitation requires confirmation and polls registration to activation",
   );
 
-  evaluate("document.querySelector('.agent-details').open=true");
+  evaluate("document.querySelector('#developer-setup').open=true");
   const draftBody = JSON.parse(
     evaluate(
-      "[...document.querySelectorAll('.agent-details .agent-copy code')].at(-1).textContent",
+      "[...document.querySelectorAll('#developer-setup .agent-copy code')].at(-1).textContent",
     ),
   );
   const diagnostic = await api("/agent", { token: active.credential.token });

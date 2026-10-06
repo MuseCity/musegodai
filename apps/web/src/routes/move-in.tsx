@@ -88,11 +88,12 @@ function MoveIn() {
     data?.muse.status === "invited" ||
     data?.muse.status === "awaiting_activation";
   useEffect(() => {
-    if (step !== "muse" || !waiting || busy) return;
+    if (step !== "muse" || busy) return;
     const refresh = () => {
       if (document.visibilityState === "visible") void load(false, true);
     };
-    const timer = error ? undefined : window.setInterval(refresh, 5000);
+    const timer =
+      waiting && !error ? window.setInterval(refresh, 5000) : undefined;
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {

@@ -87,6 +87,7 @@ import {
 import type { AccountRow, AgentRow } from "./schema";
 import { openapi, skill } from "./discovery";
 import { handleMcp } from "./mcp";
+import * as oauth from "./oauth";
 export type Services = {
   connectionString: string;
   store: ObjectStore;
@@ -153,7 +154,9 @@ async function json<T>(c: Context<AppEnv>, schema: z.ZodType<T>): Promise<T> {
   );
   return result.data;
 }
-export function createApi(s: Services) {
+// The second argument exists only in the MCP handler's private dispatch closure.
+// No public request header or tool argument can opt into OAuth REST dispatch.
+export function createApi(s: Services, mcpCredential?: string) {
   const app = new Hono<AppEnv>();
   const db = <T>(fn: (d: Database) => Promise<T>) =>
     withDatabase(s.connectionString, fn);
@@ -165,7 +168,7 @@ export function createApi(s: Services) {
     diagnostic = false,
     chargeRate = true,
   ): Promise<T> => {
-    const who = await identity(c.req.raw, s.verify);
+    const who = await identity(c.req.raw, s.verify, mcpCredential);
     return db((d) =>
       d.transaction(async () => {
         // Serialize cross-account social writes before acquiring any account row.
@@ -208,8 +211,33 @@ export function createApi(s: Services) {
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Referrer-Policy", "no-referrer");
     const origin = c.req.header("origin");
+    const oauthPublic = [
+      "/.well-known/oauth-authorization-server",
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-protected-resource/mcp",
+      "/oauth/register",
+      "/oauth/token",
+      "/oauth/revoke",
+    ].includes(c.req.path);
+    if (oauthPublic) {
+      c.header("Access-Control-Allow-Origin", "*");
+      c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      c.header(
+        "Access-Control-Allow-Headers",
+        "Content-Type, MCP-Protocol-Version",
+      );
+      c.header("Access-Control-Expose-Headers", "WWW-Authenticate");
+      if (c.req.method === "OPTIONS") return c.body(null, 204);
+    }
+    if (oauthPublic || c.req.path.startsWith("/oauth/"))
+      requireValue(
+        new URL(c.req.url).host === new URL(s.origin).host,
+        403,
+        "ORIGIN_DENIED",
+        "This request host is not allowed.",
+      );
     requireValue(
-      !origin || origin === s.origin,
+      oauthPublic || !origin || origin === s.origin,
       403,
       "ORIGIN_DENIED",
       "This request origin is not allowed.",
@@ -217,6 +245,11 @@ export function createApi(s: Services) {
     await next();
   });
   app.onError((error, c) => {
+    if (error instanceof oauth.OAuthError && c.req.path.startsWith("/oauth/"))
+      return c.json(
+        { error: error.code, error_description: error.message },
+        error.status as 400,
+      );
     const known = error instanceof ApiError;
     if (!known)
       console.error(
@@ -232,6 +265,21 @@ export function createApi(s: Services) {
         error.code === "COMMUNITY_DAILY_LIMIT"
           ? String(Math.ceil((86400000 - (Date.now() % 86400000)) / 1000))
           : "60",
+      );
+    if (c.req.path.startsWith("/oauth/"))
+      return c.json(
+        {
+          error:
+            known && error.status === 429
+              ? "temporarily_unavailable"
+              : known && error.status < 500
+                ? "invalid_request"
+                : "server_error",
+          error_description: known
+            ? error.message
+            : "The service is unavailable. Please retry.",
+        },
+        (known ? error.status : 503) as 400,
       );
     return c.json(
       {
@@ -263,9 +311,147 @@ export function createApi(s: Services) {
   });
   app.get("/skill.md", (c) => c.text(skill(s.origin)));
   app.get("/openapi.json", (c) => c.json(openapi(s.origin)));
+  app.get("/.well-known/oauth-authorization-server", (c) =>
+    c.json(oauth.authorizationMetadata(s.origin)),
+  );
+  for (const path of [
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/mcp",
+  ])
+    app.get(path, (c) => c.json(oauth.protectedMetadata(s.origin)));
+  const oauthRate = async (c: Context<AppEnv>) =>
+    db((d) =>
+      d.transaction(() =>
+        rateLimit(
+          d,
+          "oauth:" +
+            c.req.path +
+            ":" +
+            (c.req.header("cf-connecting-ip") ?? "local"),
+          30,
+        ),
+      ),
+    );
+  app.post("/oauth/register", async (c) => {
+    await oauthRate(c);
+    const body = await json(c, z.unknown());
+    return c.json(
+      await db((d) => oauth.registerClient(d, body, s.origin)),
+      201,
+    );
+  });
+  app.get("/oauth/authorize", async (c) => {
+    await oauthRate(c);
+    return c.redirect(
+      await db((d) =>
+        oauth.begin(d, new URL(c.req.url).searchParams, s.origin),
+      ),
+      302,
+    );
+  });
+  const oauthForm = async (c: Context<AppEnv>, allowed: string[]) => {
+    if (
+      !c.req
+        .header("content-type")
+        ?.startsWith("application/x-www-form-urlencoded")
+    )
+      throw new oauth.OAuthError(
+        "invalid_request",
+        "Use application/x-www-form-urlencoded.",
+      );
+    if (c.req.header("authorization"))
+      throw new oauth.OAuthError(
+        "invalid_client",
+        "Public clients use client_id and PKCE, without a client secret.",
+      );
+    return oauth.parameters(
+      new URLSearchParams(
+        new TextDecoder().decode(await boundedBody(c.req.raw, 8192)),
+      ),
+      allowed,
+    );
+  };
+  app.post("/oauth/token", async (c) => {
+    await oauthRate(c);
+    const input = await oauthForm(c, [
+      "grant_type",
+      "client_id",
+      "code",
+      "code_verifier",
+      "redirect_uri",
+      "resource",
+      "refresh_token",
+      "scope",
+    ]);
+    const result = await db((d) =>
+      d.transaction(() => oauth.exchange(d, input, s.origin)),
+    );
+    c.header("Pragma", "no-cache");
+    return c.json(result, "error" in result ? 400 : 200);
+  });
+  app.post("/oauth/revoke", async (c) => {
+    await oauthRate(c);
+    const input = await oauthForm(c, ["client_id", "token", "token_type_hint"]);
+    await db((d) => d.transaction(() => oauth.revoke(d, input)));
+    return c.body(null, 200);
+  });
+  app.get("/api/v1/oauth/requests/:id", async (c) =>
+    c.json(
+      await authed(c, undefined, true, (d, a) =>
+        oauth.preview(d, a, c.req.param("id")),
+      ),
+    ),
+  );
+  app.post("/api/v1/oauth/requests/:id/approve", async (c) => {
+    const body = await json(
+      c,
+      confirmSchema
+        .extend({ name: nameSchema, approvedScopes: scopesSchema })
+        .strict(),
+    );
+    return c.json(
+      await authed(c, undefined, true, (d, a) =>
+        oauth.consent(d, a, c.req.param("id"), s.origin, body),
+      ),
+    );
+  });
+  app.post("/api/v1/oauth/requests/:id/deny", async (c) => {
+    await json(c, z.object({}).strict());
+    return c.json(
+      await authed(c, undefined, true, (d, a) =>
+        oauth.consent(d, a, c.req.param("id"), s.origin),
+      ),
+    );
+  });
   app.all("/mcp", async (c) => {
-    const response = await handleMcp(c.req.raw, s.origin, (request) =>
-      app.fetch(request),
+    const token = c.req.header("authorization")?.replace(/^Bearer /, "");
+    const dispatch = token?.startsWith("mco_") ? createApi(s, token) : app;
+    const response = await handleMcp(
+      c.req.raw,
+      s.origin,
+      (request) => dispatch.fetch(request),
+      token?.startsWith("mco_")
+        ? async () =>
+            db((d) =>
+              d.transaction(async () => {
+                // Recheck authorization while holding the same account lock as revocation.
+                await actor(
+                  d,
+                  await identity(
+                    new Request(s.origin + "/api/v1/agent", {
+                      headers: { Authorization: "Bearer " + token },
+                    }),
+                    s.verify,
+                    token,
+                  ),
+                  undefined,
+                  false,
+                  true,
+                );
+                await oauth.markConnected(d, token);
+              }),
+            )
+        : undefined,
     );
     return c.newResponse(response.body, response);
   });
@@ -815,11 +1001,19 @@ export function createApi(s: Services) {
     c.json(
       await authed(c, undefined, true, async (d, a) =>
         (
-          await d.query<AgentRow>(
-            "SELECT * FROM musecity.agents WHERE owner_account_id=$1 ORDER BY created_at DESC",
+          await d.query<
+            AgentRow & {
+              oauth_connection: Awaited<ReturnType<typeof oauth.connection>>;
+            }
+          >(
+            `SELECT a.*, CASE WHEN g.id IS NULL THEN NULL ELSE jsonb_build_object('clientName',cl.name,'status',CASE WHEN g.revoked_at IS NOT NULL OR g.expires_at<=now() THEN 'revoked' WHEN g.connected_at IS NOT NULL THEN 'connected' ELSE 'authorized' END,'connectedAt',g.connected_at) END AS oauth_connection
+             FROM musecity.agents a LEFT JOIN musecity.oauth_grants g ON g.agent_id=a.id LEFT JOIN musecity.oauth_clients cl ON cl.id=g.client_id WHERE a.owner_account_id=$1 ORDER BY a.created_at DESC`,
             [a.account.id],
           )
-        ).map(agentService.agentView),
+        ).map((ag) => ({
+          ...agentService.agentView(ag),
+          oauthConnection: ag.oauth_connection,
+        })),
       ),
     ),
   );
@@ -829,6 +1023,7 @@ export function createApi(s: Services) {
         const ag = await agentService.ownAgent(d, a, c.req.param("id")!);
         return {
           ...agentService.agentView(ag),
+          oauthConnection: await oauth.connection(d, ag.id),
           credentials: await d.query(
             "SELECT prefix,expires_at,revoked_at FROM musecity.credentials WHERE agent_id=$1 ORDER BY created_at DESC",
             [ag.id],

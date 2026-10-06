@@ -45,6 +45,61 @@ export const agents = appSchema.table("agents", {
   public_visible: boolean().notNull().default(false),
   description: text().notNull().default(""),
 });
+export const oauthClients = appSchema.table("oauth_clients", {
+  id: text().primaryKey(),
+  name: text().notNull(),
+  redirect_uris: jsonb().$type<string[]>().notNull(),
+  created_at: time("created_at"),
+});
+export const oauthRequests = appSchema.table("oauth_requests", {
+  id: text().primaryKey(),
+  client_id: text()
+    .notNull()
+    .references(() => oauthClients.id),
+  redirect_uri: text().notNull(),
+  state: text(),
+  resource: text().notNull(),
+  code_challenge: text().notNull(),
+  requested_scopes: jsonb().$type<Scope[]>().notNull(),
+  owner_account_id: text().references(() => accounts.id, {
+    onDelete: "cascade",
+  }),
+  name: text(),
+  approved_scopes: jsonb().$type<Scope[]>(),
+  status: text().notNull().default("pending"),
+  code_hash: text().unique(),
+  expires_at: time("expires_at"),
+  created_at: time("created_at"),
+});
+export const oauthGrants = appSchema.table("oauth_grants", {
+  id: text().primaryKey(),
+  client_id: text()
+    .notNull()
+    .references(() => oauthClients.id),
+  owner_account_id: text()
+    .notNull()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  agent_id: text()
+    .notNull()
+    .references(() => agents.id, { onDelete: "cascade" }),
+  resource: text().notNull(),
+  scopes: jsonb().$type<Scope[]>().notNull(),
+  version: integer().notNull().default(1),
+  expires_at: time("expires_at"),
+  revoked_at: timestamp({ withTimezone: true, mode: "date" }),
+  connected_at: timestamp({ withTimezone: true, mode: "date" }),
+});
+export const oauthRefreshTokens = appSchema.table("oauth_refresh_tokens", {
+  id: text().primaryKey(),
+  grant_id: text()
+    .notNull()
+    .references(() => oauthGrants.id, { onDelete: "cascade" }),
+  version: integer().notNull(),
+  token_hash: text().notNull().unique(),
+  scopes: jsonb().$type<Scope[]>().notNull(),
+  expires_at: time("expires_at"),
+  used_at: timestamp({ withTimezone: true, mode: "date" }),
+});
 export const credentials = appSchema.table("credentials", {
   id: text().primaryKey(),
   agent_id: text()
@@ -52,6 +107,11 @@ export const credentials = appSchema.table("credentials", {
     .references(() => agents.id),
   token_hash: text().notNull().unique(),
   prefix: text().notNull(),
+  oauth_grant_id: text().references(() => oauthGrants.id, {
+    onDelete: "cascade",
+  }),
+  oauth_version: integer(),
+  oauth_scopes: jsonb().$type<Scope[]>(),
   expires_at: time("expires_at"),
   revoked_at: timestamp({ withTimezone: true, mode: "date" }),
   created_at: time("created_at"),

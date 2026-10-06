@@ -30,6 +30,7 @@ export default [
   route("me/agents", "routes/agents.tsx"),
   route("agents", "routes/agent-onboarding.tsx"),
   route("agents/claim", "routes/claim.tsx"),
+  route("agents/connect", "routes/agent-connect.tsx"),
   route("agents/mcp", "routes/mcp-guide.tsx"),
   route("settings", "routes/settings.tsx"),
 ] satisfies RouteConfig;

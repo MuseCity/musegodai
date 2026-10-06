@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, Copy } from "lucide-react";
+import { Link } from "react-router";
 import { useApi, errorMessage } from "./api";
 import {
   type AgentView,
@@ -101,9 +102,11 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [load]);
-  const waiting = [...pending, ...invites].some(
-    (v) => new Date(v.expires_at).getTime() > Date.now(),
-  );
+  const waiting =
+    [...pending, ...invites].some(
+      (v) => new Date(v.expires_at).getTime() > Date.now(),
+    ) ||
+    agents?.some((agent) => agent.oauthConnection?.status === "authorized");
   useEffect(() => {
     if (!waiting || error) return;
     const timer = window.setInterval(() => {
@@ -126,15 +129,15 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
       );
       setInvite(false);
       setSecret(
-        "Read " +
-          location.origin +
-          "/skill.md. Register as " +
-          JSON.stringify(name) +
-          " with invitationToken " +
-          result.invitationToken +
-          " and requestedScopes " +
-          JSON.stringify(invitationScopes) +
-          ". Keep all credentials private.",
+        JSON.stringify(
+          {
+            name,
+            invitationToken: result.invitationToken,
+            requestedScopes: invitationScopes,
+          },
+          null,
+          2,
+        ),
       );
       await load();
     } catch (e) {
@@ -215,19 +218,9 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
           >
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
-          <button
-            className="primary"
-            onClick={() => {
-              setName("");
-              setAutonomous(false);
-              setCommunityScopes([]);
-              setAccepted(false);
-              setInvite(true);
-              setError("");
-            }}
-          >
-            + Invite an agent
-          </button>
+          <Link className="primary" to="/agents/mcp">
+            Connect with OAuth
+          </Link>
         </div>
       </div>
       {error && <Notice>{error}</Notice>}
@@ -253,6 +246,31 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
                 </div>
                 <span className="status-chip">{a.status}</span>
               </div>
+              {a.oauthConnection && (
+                <p className="text-sm text-muted" role="status">
+                  {a.oauthConnection.clientName} ·{" "}
+                  {a.oauthConnection.status === "connected"
+                    ? "Connected · verified MCP request received"
+                    : a.oauthConnection.status === "revoked"
+                      ? "OAuth connection revoked"
+                      : "Authorized · waiting for a verified MCP request"}
+                  {a.oauthConnection.status === "connected" &&
+                    a.oauthConnection.connectedAt && (
+                      <span className="block text-xs mt-1">
+                        Verified{" "}
+                        {new Date(
+                          a.oauthConnection.connectedAt,
+                        ).toLocaleString()}
+                      </span>
+                    )}
+                </p>
+              )}
+              {!a.oauthConnection && (
+                <p className="text-xs text-muted">
+                  Manual credential · active status does not prove a tested
+                  client connection.
+                </p>
+              )}
               <p className="text-xs text-muted">
                 {a.scopes.includes("community:post")
                   ? "Community posts enabled"
@@ -302,12 +320,18 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
                     >
                       Rename
                     </button>
-                    <button
-                      className="text-button"
-                      onClick={() => setAction({ agent: a, kind: "rotate" })}
-                    >
-                      Rotate key
-                    </button>
+                    {a.oauthConnection ? (
+                      <Link className="text-link" to="/agents/mcp">
+                        Reconnect through your client
+                      </Link>
+                    ) : (
+                      <button
+                        className="text-button"
+                        onClick={() => setAction({ agent: a, kind: "rotate" })}
+                      >
+                        Rotate key
+                      </button>
+                    )}
                     <button
                       className="text-button !text-red-600"
                       onClick={() => setAction({ agent: a, kind: "revoke" })}
@@ -328,9 +352,34 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
         </div>
       ) : (
         <Empty title="Good company for your creations.">
-          <p>Invite your first agent. It starts with draft permission.</p>
+          <p>
+            Connect your client with OAuth. Your Agent starts with private
+            drafts.
+          </p>
         </Empty>
       )}
+      <details className="panel agent-details mt-7">
+        <summary>Developer setup · manual credentials</summary>
+        <p className="text-sm text-muted mt-4">
+          Use an invitation only for a runtime you control with a secure secret
+          store. Do not paste invitation or credential secrets into an AI
+          conversation. For ChatGPT and other supported MCP clients, use OAuth
+          above.
+        </p>
+        <button
+          className="secondary mt-4"
+          onClick={() => {
+            setName("");
+            setAutonomous(false);
+            setCommunityScopes([]);
+            setAccepted(false);
+            setInvite(true);
+            setError("");
+          }}
+        >
+          Create developer invitation
+        </button>
+      </details>
       {(pending.length > 0 || invites.length > 0) && (
         <div className="panel mt-7">
           <h3 className="mb-4">Waiting to connect</h3>
@@ -361,7 +410,7 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
       )}
       {invite && (
         <Dialog
-          title="Invite your agent"
+          title="Create a developer invitation"
           onClose={() => !busy && setInvite(false)}
         >
           <div className="form-stack">
@@ -437,9 +486,10 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
           }}
         >
           <p className="text-muted text-sm mb-4">
-            Shown once. Send it only to your agent. If lost, rotate its active
-            key, or cancel the unfinished connection before creating a new
-            invitation.
+            Shown once. Save this directly in your trusted runtime’s secret
+            store. Do not paste it into an AI conversation. If lost, rotate a
+            manual active key, or cancel the unfinished connection before
+            creating a new invitation.
           </p>
           <code className="secret">{secret}</code>
           <button

@@ -39,7 +39,9 @@ export async function onboardingState(
       [introductionId, a.account.id],
     ));
   const agent = await db.one<{ id: string; name: string }>(
-    "SELECT a.id,a.name FROM musecity.agents a WHERE a.owner_account_id=$1 AND a.status='active' AND EXISTS(SELECT 1 FROM musecity.credentials c WHERE c.agent_id=a.id AND c.revoked_at IS NULL AND c.expires_at>now()) ORDER BY a.created_at,a.id LIMIT 1",
+    `SELECT a.id,a.name FROM musecity.agents a WHERE a.owner_account_id=$1 AND a.status='active' AND (
+      EXISTS(SELECT 1 FROM musecity.credentials c WHERE c.agent_id=a.id AND c.oauth_grant_id IS NULL AND c.revoked_at IS NULL AND c.expires_at>now()) OR
+      EXISTS(SELECT 1 FROM musecity.oauth_grants g WHERE g.agent_id=a.id AND g.revoked_at IS NULL AND g.expires_at>now() AND g.connected_at IS NOT NULL)) ORDER BY a.created_at,a.id LIMIT 1`,
     [a.account.id],
   );
   const pending = agent
@@ -57,6 +59,12 @@ export async function onboardingState(
     ) p ORDER BY (expires_at>now()) DESC,created_at DESC,id DESC LIMIT 1`,
         [a.account.id],
       );
+  const awaitingOAuth =
+    !agent &&
+    (await db.one<{ id: string }>(
+      "SELECT g.id FROM musecity.oauth_grants g JOIN musecity.agents a ON a.id=g.agent_id WHERE g.owner_account_id=$1 AND g.revoked_at IS NULL AND g.expires_at>now() AND g.connected_at IS NULL AND a.status='active' LIMIT 1",
+      [a.account.id],
+    ));
   return {
     profile: profile(a.account),
     startedAt: saved?.started_at.toISOString() ?? null,
@@ -78,7 +86,9 @@ export async function onboardingState(
             : pending.kind === "invitation"
               ? "invited"
               : "awaiting_activation"
-          : "pending",
+          : awaitingOAuth
+            ? "awaiting_activation"
+            : "pending",
       deferred: saved?.muse_skipped ?? false,
       agent: agent ?? null,
       pending: pending
