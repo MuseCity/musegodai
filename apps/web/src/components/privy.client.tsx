@@ -139,7 +139,8 @@ export default function LiveAuth({
         appearance: {
           theme: "light",
           accentColor: "#9F1D2D",
-          logo: "/brand/horizontal.webp",
+          logo: "/brand/icon.png",
+          landingHeader: "Log in to musegod.ai",
         },
         embeddedWallets: {
           showWalletUIs: true,

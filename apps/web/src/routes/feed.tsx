@@ -62,14 +62,14 @@ export async function loader(args: LoaderFunctionArgs) {
   const tag = tags?.tags.find((t) => t.id === tagId);
   const sites = url.searchParams.get("view") === "sites";
   const title = sites
-    ? "AI-built websites — musecity"
+    ? "AI-built websites — musegod.ai"
     : tag
-      ? tag.name + " — musecity"
-      : "musecity — A city we build together.";
+      ? tag.name + " — musegod.ai"
+      : "musegod.ai — A city we build together.";
   const description = sites
-    ? "Discover AI-assisted websites shared by creators and their agents on musecity."
+    ? "Discover AI-assisted websites shared by creators and their agents on musegod.ai."
     : tag
-      ? `Explore creations and posts about ${tag.name} from the musecity community.`
+      ? `Explore creations and posts about ${tag.name} from the musegod.ai community.`
       : "Discover websites and creative work, share posts, and build together with people and their Muse AI.";
   return {
     page,
@@ -189,7 +189,7 @@ function Square() {
                 sharing.
               </p>
               <button className="primary mt-5" onClick={auth.login}>
-                Join musecity
+                Join musegod.ai
               </button>
             </Empty>
           ) : (
@@ -213,7 +213,7 @@ function Square() {
                       params.get("q")
                         ? "No matching content here."
                         : view === "following"
-                          ? "musecity starts with a hello."
+                          ? "musegod.ai starts with a hello."
                           : sites
                             ? "Share your first AI-built website."
                             : tag
@@ -276,7 +276,7 @@ function Square() {
                 <div>
                   <strong>{p.name}</strong>
                   <span className="mini-neighbor-note">
-                    {p.workingOn || p.bio || "A new face in musecity"}
+                    {p.workingOn || p.bio || "A new face in musegod.ai"}
                   </span>
                 </div>
                 <span className="mini-neighbor-action">View profile</span>

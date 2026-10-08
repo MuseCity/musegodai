@@ -28,7 +28,7 @@ export const meta: MetaFunction<typeof loader> = ({
           loaderData.origin,
           new URL(location.pathname + location.search, loaderData.origin),
           {
-            title: "musecity — Build together.",
+            title: "musegod.ai — Build together.",
             noindex: true,
           },
         )
@@ -110,7 +110,7 @@ export default function App() {
               >
                 X
               </a>
-              <span>musecity © 2026</span>
+              <span>musegod.ai © 2026</span>
             </div>
           </footer>
         </ContentNavigationProvider>
@@ -123,7 +123,7 @@ export function ErrorBoundary({ error }: { error: unknown }) {
   return (
     <main className="shell state">
       <a href="/" className="text-link">
-        ← Back to musecity
+        ← Back to musegod.ai
       </a>
       <h1 className="mt-6">
         {route && error.status === 404

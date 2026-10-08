@@ -61,7 +61,7 @@ export function AuthProvider({
 }
 export function RequireAuth({
   children,
-  title = "Your place in musecity.",
+  title = "Your place in musegod.ai.",
   description = "Sign in to meet neighbors, share what you are doing and bring your agents.",
 }: {
   children: ReactNode;

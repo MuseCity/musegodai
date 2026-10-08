@@ -49,7 +49,7 @@ function Reports() {
     <>
       <div className="page-top">
         <div>
-          <h1>musecity care.</h1>
+          <h1>musegod.ai care.</h1>
           <p>
             Review reports, hide harmful content, and restore it when
             appropriate.
@@ -127,7 +127,7 @@ function Reports() {
         <Dialog
           title={
             action.kind === "hide"
-              ? "Hide this from musecity?"
+              ? "Hide this from musegod.ai?"
               : action.kind === "restore"
                 ? "Restore this content?"
                 : "Dismiss this report?"

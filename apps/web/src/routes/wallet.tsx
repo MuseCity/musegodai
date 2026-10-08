@@ -20,7 +20,7 @@ import {
 } from "../shared/wallet";
 
 export const meta = () => [
-  { title: "Your wallet — musecity" },
+  { title: "Your wallet — musegod.ai" },
   { name: "robots", content: "noindex, follow" },
 ];
 type Transaction = {
@@ -58,7 +58,7 @@ const transferField = (message: string) =>
 export default function Wallet() {
   return (
     <RequireAuth
-      title="Your Musecity wallet."
+      title="Your musegod.ai wallet."
       description="Sign in to receive tokens, transfer assets and check your formal membership."
     >
       <WalletPage />
@@ -394,7 +394,7 @@ function WalletPage() {
       >
         {!wallet ? (
           <>
-            <h2>Musecity embedded wallet</h2>
+            <h2>musegod.ai embedded wallet</h2>
             <p>
               {!auth.walletsReady
                 ? "Preparing your wallet…"
@@ -436,7 +436,7 @@ function WalletPage() {
           <>
             <div className="wallet-overview">
               <div>
-                <p className="wallet-eyebrow">Musecity wallet</p>
+                <p className="wallet-eyebrow">musegod.ai wallet</p>
                 <span className="wallet-account" title={wallet.address}>
                   {shortAddress(wallet.address)}
                 </span>

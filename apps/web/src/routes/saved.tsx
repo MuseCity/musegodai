@@ -11,7 +11,7 @@ import {
 import { Empty } from "../components/ui";
 import type { SavedItem } from "../shared/interactions";
 export const meta = () => [
-  { title: "My saved — musecity" },
+  { title: "My saved — musegod.ai" },
   { name: "robots", content: "noindex, follow" },
 ];
 export default function Saved() {

@@ -60,13 +60,13 @@ export function Header() {
   return (
     <header className="site-header">
       <div className="header-main shell">
-        <Link to="/" aria-label="musecity home" className="brand">
+        <Link to="/" aria-label="musegod.ai home" className="brand">
           <img src="/brand/icon.png" width="44" height="44" alt="" />
           <span>
-            muse<span className="brand-city">city</span>
+            muse<span className="brand-city">god.ai</span>
           </span>
         </Link>
-        <nav className="primary-nav" aria-label="musecity">
+        <nav className="primary-nav" aria-label="musegod.ai">
           <Link
             to="/"
             aria-current={location.pathname === "/" ? "page" : undefined}

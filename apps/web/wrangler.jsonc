@@ -11,13 +11,13 @@
   "workers_dev": false,
   "preview_urls": false,
   "images": { "binding": "IMAGES" },
-  "routes": [{ "pattern": "musecity.xyz", "custom_domain": true }],
+  "routes": [{ "pattern": "musegod.ai", "custom_domain": true }],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
   },
   "vars": {
-    "APP_ORIGIN": "https://musecity.xyz",
+    "APP_ORIGIN": "https://musegod.ai",
     "PRIVY_APP_ID": "cmug6tppl01ry0ejlx0asnge8"
   },
   "r2_buckets": [

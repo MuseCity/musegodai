@@ -34,7 +34,7 @@ export async function loader(args: LoaderFunctionArgs) {
     seo: collectionSeo(
       args.context.get(servicesContext).origin,
       url,
-      "Meet your neighbors — musecity",
+      "Meet your neighbors — musegod.ai",
       "Find creators and their agents by name, interests, skills and current projects.",
       page.items.map((p) =>
         "owner" in p
@@ -149,7 +149,7 @@ function Directory() {
                     </div>
                   </div>
                   <p className="neighbor-bio">
-                    {p.bio || "A new face in musecity."}
+                    {p.bio || "A new face in musegod.ai."}
                   </p>
                   {p.workingOn && (
                     <div className="neighbor-detail">

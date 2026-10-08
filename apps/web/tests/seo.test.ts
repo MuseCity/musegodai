@@ -24,7 +24,7 @@ import { loader as galleryLoader } from "../src/routes/site-gallery";
 import { siteBuilders } from "../src/shared/site-builders";
 
 const comments: Page<CommentView> = { items: [], nextCursor: null };
-const origin = "https://musecity.xyz";
+const origin = "https://musegod.ai";
 beforeEach(reset);
 async function admin(query: string, values: unknown[] = []) {
   assertLocalTarget(config.testAdminUrl, "musecity_test", "musecity_admin");
@@ -181,7 +181,7 @@ describe("public search discovery", () => {
 
   it("redirects production HTTP with its path and query, leaving the local HTTP runtime usable", () => {
     const redirect = httpsRedirect(
-      new Request("http://musecity.xyz/?view=sites&tag=design"),
+      new Request("http://musegod.ai/?view=sites&tag=design"),
       origin,
     )!;
     expect(redirect.status).toBe(308);
@@ -232,7 +232,7 @@ describe("public search discovery", () => {
         current,
         comments,
       ).title,
-    ).toBe(article.title + " — musecity");
+    ).toBe(article.title + " — musegod.ai");
     expect(await sitemap()).toBe(published);
     await f.call("/works/" + work.workId + "/publish", {
       method: "POST",

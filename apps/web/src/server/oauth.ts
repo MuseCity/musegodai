@@ -31,7 +31,7 @@ export const challenge = (
   error?: string,
   scopes = draftScopes,
 ) =>
-  `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="${scopes.join(" ")}"${error ? `, error="${error}", error_description="Reconnect Musecity with the required permissions"` : ""}`;
+  `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="${scopes.join(" ")}"${error ? `, error="${error}", error_description="Reconnect musegod.ai with the required permissions"` : ""}`;
 export function authorizationMetadata(origin: string) {
   return {
     issuer: origin,
@@ -195,7 +195,7 @@ export async function begin(
   check(
     p.resource === resource(origin),
     "invalid_target",
-    "Request the Musecity MCP resource.",
+    "Request the musegod.ai MCP resource.",
   );
   check(
     p.code_challenge_method === "S256" &&
@@ -397,7 +397,7 @@ export async function exchange(
   check(
     p.resource === resource(origin),
     "invalid_target",
-    "Request the Musecity MCP resource.",
+    "Request the musegod.ai MCP resource.",
   );
   check(p.client_id, "invalid_client", "Supply the registered client id.");
   if (p.grant_type === "authorization_code") {
@@ -443,7 +443,7 @@ export async function exchange(
     if (agent?.status === "paused")
       throw new OAuthError(
         "invalid_grant",
-        "Resume this Agent in Musecity before reconnecting.",
+        "Resume this Agent in musegod.ai before reconnecting.",
       );
     if (!agent || agent.status === "revoked") {
       const count = await db.one<{ n: string }>(
@@ -538,7 +538,7 @@ export async function exchange(
     await revokeGrant(db, grant.id);
     return {
       error: "invalid_grant",
-      error_description: "Refresh token already used. Reconnect Musecity.",
+      error_description: "Refresh token already used. Reconnect musegod.ai.",
     };
   }
   check(
@@ -547,7 +547,7 @@ export async function exchange(
       saved.expires_at > new Date() &&
       agent?.status === "active",
     "invalid_grant",
-    "Reconnect Musecity or resume this Agent.",
+    "Reconnect musegod.ai or resume this Agent.",
   );
   const available = saved.scopes.filter(
     (s) => grant.scopes.includes(s) && agent.scopes.includes(s),

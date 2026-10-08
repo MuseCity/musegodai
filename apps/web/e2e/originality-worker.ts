@@ -15,7 +15,7 @@ export async function originalityWorker(
   const bundle = await build({
     stdin: {
       contents: `import { verifyWebsite } from './src/server/website-verification.ts';
-        export default { async fetch(request) { return Response.json(await verifyWebsite(await request.json(), 'https://musecity.xyz')); } };`,
+        export default { async fetch(request) { return Response.json(await verifyWebsite(await request.json(), 'https://musegod.ai')); } };`,
       resolveDir: process.cwd(),
       sourcefile: "local-originality-worker.ts",
     },

@@ -20,7 +20,7 @@ export function loader({ url, context }: LoaderFunctionArgs) {
     builder,
     guidance,
     seo: pageSeo(origin, url, {
-      title: builder.guideTitle + " — musecity",
+      title: builder.guideTitle + " — musegod.ai",
       description: builder.guideDescription,
       article: true,
       structured: {
@@ -30,7 +30,7 @@ export function loader({ url, context }: LoaderFunctionArgs) {
         description: builder.guideDescription,
         url: new URL(builder.guidePath, origin).href,
         dateModified: "2026-09-28",
-        author: { "@type": "Organization", name: "musecity", url: origin },
+        author: { "@type": "Organization", name: "musegod.ai", url: origin },
         citation: guidance.sources.map((source) => source.url),
       },
     }),
@@ -56,7 +56,7 @@ export default function SiteGuide() {
             <p>{section.text}</p>
           </section>
         ))}
-        <h2>4. Share your project on musecity</h2>
+        <h2>4. Share your project on musegod.ai</h2>
         <ol>
           <li>
             Sign in and{" "}
@@ -80,10 +80,10 @@ export default function SiteGuide() {
           </li>
         </ol>
         <p>
-          musecity shares a link to your project and hosts its community
+          musegod.ai shares a link to your project and hosts its community
           discussion. It does not host the external app, change its audience, or
           grant visitors access to a private workspace. Removing a listing from
-          musecity does not unpublish the original project.
+          musegod.ai does not unpublish the original project.
         </p>
         <h2>Explore community projects</h2>
         <p>

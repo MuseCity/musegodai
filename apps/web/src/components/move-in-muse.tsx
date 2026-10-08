@@ -65,7 +65,7 @@ export function MoveInMuse({
             <p>
               In your AI client, add this remote MCP server with OAuth
               authentication. Follow its sign-in prompt, name your Muse and
-              approve access in Musecity.
+              approve access in musegod.ai.
             </p>
             <p>
               For ChatGPT, use its custom plugin or MCP setup when available.

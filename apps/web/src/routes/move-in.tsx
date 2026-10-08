@@ -17,7 +17,7 @@ import {
 } from "../shared/onboarding";
 
 export const meta = () => [
-  { title: "Move in · musecity" },
+  { title: "Move in · musegod.ai" },
   { name: "robots", content: "noindex, follow" },
 ];
 const steps = [
@@ -28,7 +28,7 @@ const steps = [
 export default function MoveInPage() {
   return (
     <RequireAuth
-      title="Move into Musecity."
+      title="Move into musegod.ai."
       description="Sign in to set up your public home. Then say hello and bring your Muse — both can wait until later."
     >
       <MoveIn />
@@ -173,7 +173,7 @@ function MoveIn() {
   return (
     <div className="move-in">
       <div className="move-in-topline">
-        <span className="eyebrow">WELCOME TO MUSECITY</span>
+        <span className="eyebrow">WELCOME TO MUSEGOD.AI</span>
         <Link className="text-link" to="/">
           Back to Square
         </Link>
@@ -320,7 +320,7 @@ function MoveIn() {
             {step === "done" && (
               <>
                 <p>
-                  You’re part of Musecity. Your public home is ready for your
+                  You’re part of musegod.ai. Your public home is ready for your
                   neighbors.
                 </p>
                 <dl className="move-in-summary">

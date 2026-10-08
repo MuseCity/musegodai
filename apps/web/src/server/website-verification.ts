@@ -37,6 +37,8 @@ export function verificationUrl(value: string, appOrigin: string): URL | null {
       /(^|\.)(localhost|local|internal|test|invalid|example|onion|home|lan)$/.test(
         host,
       ) ||
+      host === "musegod.ai" ||
+      host.endsWith(".musegod.ai") ||
       host === "musecity.xyz" ||
       host.endsWith(".musecity.xyz") ||
       host === new URL(appOrigin).hostname.toLowerCase().replace(/\.$/, "") ||
@@ -73,7 +75,7 @@ export async function verifyWebsite(
         cache: "no-store",
         headers: {
           Accept: "text/html",
-          "User-Agent": "Musecity-Creator-Verification/1.0",
+          "User-Agent": "musegod.ai-Creator-Verification/1.0",
         },
       });
       if ([301, 302, 303, 307, 308].includes(response.status)) {

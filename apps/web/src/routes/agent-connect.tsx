@@ -42,7 +42,7 @@ const permissions: Record<Scope, { label: string; description: string }> = {
   },
 };
 export const meta = () => [
-  { title: "Authorize an Agent connection · musecity" },
+  { title: "Authorize an Agent connection · musegod.ai" },
   { name: "robots", content: "noindex, nofollow" },
 ];
 
@@ -69,7 +69,7 @@ export default function AgentConnect() {
   }, [supplied]);
   return (
     <RequireAuth
-      title="Connect your Agent to Musecity."
+      title="Connect your Agent to musegod.ai."
       description="Sign in to review this connection and choose what your Agent can do. Your client handles credentials securely."
     >
       <ConnectionConsent key={requestId} requestId={requestId} />

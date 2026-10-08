@@ -48,14 +48,14 @@ if (!config.compatibility_flags?.includes("global_fetch_strictly_public"))
 if (process.argv.includes("--deployment")) {
   if (!config.hyperdrive?.[0]?.id || /^0+$/.test(config.hyperdrive[0].id))
     throw new Error("Configure a real Hyperdrive binding before deployment.");
-  if (config.vars.APP_ORIGIN !== "https://musecity.xyz")
+  if (config.vars.APP_ORIGIN !== "https://musegod.ai")
     throw new Error("Configure the production origin before deployment.");
   if (!config.vars.PRIVY_APP_ID)
     throw new Error("Configure the production Privy App ID before deployment.");
   if (
     !config.account_id ||
     !config.routes?.some(
-      (route: { pattern: string }) => route.pattern === "musecity.xyz",
+      (route: { pattern: string }) => route.pattern === "musegod.ai",
     )
   )
     throw new Error(

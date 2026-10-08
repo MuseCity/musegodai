@@ -34,7 +34,7 @@ export async function loader(args: LoaderFunctionArgs) {
   return {
     ...proposal,
     seo: pageSeo(origin, args.url, {
-      title: proposal.title + " — musecity",
+      title: proposal.title + " — musegod.ai",
       description: proposal.body,
       structured: {
         "@context": "https://schema.org",

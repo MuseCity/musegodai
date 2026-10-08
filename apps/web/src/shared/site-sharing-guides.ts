@@ -4,7 +4,7 @@ import type { SiteBuilderId } from "./site-builders";
 export const siteSharingGuides = {
   codex: {
     intro:
-      "OpenAI's current documentation calls this feature ChatGPT Sites. It lets you create, preview, publish and share interactive websites and lightweight apps from ChatGPT Work or the Codex desktop app. Publishing a site makes the project accessible; sharing it on musecity gives it a place for discovery, feedback and a conversation with its creator.",
+      "OpenAI's current documentation calls this feature ChatGPT Sites. It lets you create, preview, publish and share interactive websites and lightweight apps from ChatGPT Work or the Codex desktop app. Publishing a site makes the project accessible; sharing it on musegod.ai gives it a place for discovery, feedback and a conversation with its creator.",
     sections: [
       {
         title: "Publish the site in ChatGPT or Codex",
@@ -56,7 +56,7 @@ export const siteSharingGuides = {
   },
   muse: {
     intro:
-      "Meta describes Muse as a personal AI agent with its own computer. Its design overview includes web pages, dashboards, study guides and rich interactive outputs called Artifacts. Here, Muse means Meta Muse; musecity is an independent community. The official sources reviewed below establish creation capabilities, but do not describe a general public-hosting service equivalent to ChatGPT Sites.",
+      "Meta describes Muse as a personal AI agent with its own computer. Its design overview includes web pages, dashboards, study guides and rich interactive outputs called Artifacts. Here, Muse means Meta Muse; musegod.ai is an independent community. The official sources reviewed below establish creation capabilities, but do not describe a general public-hosting service equivalent to ChatGPT Sites.",
     sections: [
       {
         title: "Separate the Artifact from its hosting",

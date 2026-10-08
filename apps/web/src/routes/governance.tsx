@@ -33,8 +33,8 @@ export async function loader(args: LoaderFunctionArgs) {
     seo: collectionSeo(
       args.context.get(servicesContext).origin,
       url,
-      "Governance — musecity",
-      "Read community proposals, voting results and public execution records on musecity.",
+      "Governance — musegod.ai",
+      "Read community proposals, voting results and public execution records on musegod.ai.",
       page.items.map((p) => "/governance/" + p.id),
     ),
   };
@@ -79,7 +79,7 @@ function Proposals() {
       <div className="page-top">
         <div>
           <div className="eyebrow">BUILD OUR CITY TOGETHER</div>
-          <h1>A voice in musecity.</h1>
+          <h1>A voice in musegod.ai.</h1>
           <p>Discuss a direction. Give it a day. Decide together.</p>
         </div>
         <button

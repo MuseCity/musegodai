@@ -56,7 +56,7 @@ export function qualificationWallet(
     wallets.length <= 1,
     503,
     "WALLET_UNAVAILABLE",
-    "Could not identify your Musecity wallet.",
+    "Could not identify your musegod.ai wallet.",
   );
   const w = wallets[0];
   return w

@@ -97,7 +97,7 @@ function Settings() {
         <div className="welcome-note mb-7">
           <div>
             <strong>
-              {p.joinedAt ? "Your home in Musecity" : "Ready to move in?"}
+              {p.joinedAt ? "Your home in musegod.ai" : "Ready to move in?"}
             </strong>
             <p>
               {p.joinedAt
@@ -178,7 +178,7 @@ function Settings() {
           </label>
           {p.joinedAt && (
             <p className="success-message">
-              You’re part of musecity.{" "}
+              You’re part of musegod.ai.{" "}
               <Link className="text-link" to={"/u/" + savedHandle}>
                 Visit my home →
               </Link>
@@ -283,7 +283,7 @@ function Settings() {
       </div>
       {p?.isModerator && (
         <Link className="text-link inline-block mt-5" to="/moderation">
-          Open musecity moderation →
+          Open musegod.ai moderation →
         </Link>
       )}
       <div className="panel mt-10">

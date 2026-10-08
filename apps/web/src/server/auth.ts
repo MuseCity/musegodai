@@ -193,7 +193,7 @@ export async function actor(
           grant.resource === who.resource,
         401,
         "CREDENTIAL_REVOKED",
-        "Reconnect Musecity in your MCP client.",
+        "Reconnect musegod.ai in your MCP client.",
       );
       agent = {
         ...agent,

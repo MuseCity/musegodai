@@ -105,7 +105,7 @@ export async function createProposal(
     member.formalMember,
     403,
     "MEMBERSHIP_REQUIRED",
-    "Hold at least 100,000 MUSEGOD in your Musecity wallet on Robinhood Chain to publish a proposal.",
+    "Hold at least 100,000 MUSEGOD in your musegod.ai wallet on Robinhood Chain to publish a proposal.",
   );
   await dailyBudget(db, a, "publication");
   const proposalId = id("prp");

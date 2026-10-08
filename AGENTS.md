@@ -1,4 +1,4 @@
-# musecity engineering boundaries
+# musegod.ai engineering boundaries
 
 - Respond in English by default. Read SPEC.md and PLAN.md first; for Agent-related work, also read docs/agent-integration.md.
 - The user has authorized implementation according to SPEC and the agreed plan in the conversation. Production deployment and remote pushes require separate authorization; never present local tests as evidence of real third-party integration or a live release.
@@ -14,6 +14,6 @@
 - Use Node 24 and corepack pnpm 10.33.2. The application is in apps/web; run package-level commands. Tests are in tests/, and browser acceptance checks are in e2e/.
 - Production entry points must not import e2e code or test authentication verifiers. Generate Worker Env with wrangler types. Keep secrets only in ignored files or cloud Secrets.
 
-- Musecity is an independent fresh-data project. Do not import predecessor credentials, runtime data, secrets, or Git history. Only Musecity release records belong in this repository.
+- musegod.ai is the renamed independent Musecity project. Do not import predecessor credentials, runtime data, secrets, or Git history. Only Musecity release records belong in this repository.
 - Local PostgreSQL must use 127.0.0.1:65433 and the musecity / musecity_test / musecity_e2e databases. Validate the target before migrations or test resets; fixtures may never connect to Supabase.
 - Read authorized cloud input from the ignored root .env, retain its contents, and generate package-local settings with scripts/configure-local.ts. Cloud development must use the verified Musecity project and dedicated musecity_worker role with certificate verification; never use the postgres administrator as runtime.

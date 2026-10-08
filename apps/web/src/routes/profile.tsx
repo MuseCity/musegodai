@@ -51,11 +51,11 @@ export async function loader(args: LoaderFunctionArgs) {
     ),
   ]);
   const seo = pageSeo(origin, url, {
-    title: `${profile.name} (@${profile.handle}) — musecity`,
+    title: `${profile.name} (@${profile.handle}) — musegod.ai`,
     description:
       profile.bio ||
       profile.workingOn ||
-      `Public creations, posts and conversations from ${profile.name} on musecity.`,
+      `Public creations, posts and conversations from ${profile.name} on musegod.ai.`,
     image: profile.avatarMediaId
       ? "/media/" + profile.avatarMediaId + "?w=256"
       : undefined,
@@ -105,7 +105,7 @@ function Home() {
         <>
           <section className="resident-home">
             <div className="home-cover">
-              <span>AT HOME IN MUSECITY</span>
+              <span>AT HOME IN MUSEGOD.AI</span>
             </div>
             <div className="home-profile">
               <Avatar person={p} large />
@@ -116,7 +116,7 @@ function Home() {
                 </div>
               </div>
               <p className="home-bio">
-                {p.bio || "Getting settled in musecity."}
+                {p.bio || "Getting settled in musegod.ai."}
               </p>
               <div className="home-actions">
                 <RelationshipActions

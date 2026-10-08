@@ -96,6 +96,8 @@ describe("website verification in real local workerd with intercepted external r
       "https://something.internal",
       "https://something.local",
       "https://example.invalid",
+      "https://musegod.ai/api/v1/me",
+      "https://api.musegod.ai",
       "https://musecity.xyz/api/v1/me",
       "https://api.musecity.xyz",
     ])
@@ -107,7 +109,7 @@ describe("website verification in real local workerd with intercepted external r
     expect(
       verificationUrl(
         "https://creator.example.com:443/site?q=1#page",
-        "https://musecity.xyz",
+        "https://musegod.ai",
       )?.href,
     ).toBe("https://creator.example.com/site?q=1");
   });

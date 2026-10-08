@@ -47,7 +47,7 @@ export async function loader(args: LoaderFunctionArgs) {
     seo: collectionSeo(
       origin,
       url,
-      builder.title + " — musecity",
+      builder.title + " — musegod.ai",
       builder.description,
       page.items.map((item) => "/works/" + item.id),
       !page.items.length,
@@ -87,8 +87,8 @@ function Gallery() {
         </div>
       </header>
       <p className="text-muted text-sm mb-3">
-        Sources are declared by creators. musecity is an independent community;
-        listings are not verified by the builder.
+        Sources are declared by creators. musegod.ai is an independent
+        community; listings are not verified by the builder.
       </p>
       <ContentSearch placeholder={"Search " + builder.name + " websites…"} />
       <QueryState busy={query.busy} error={query.error} retry={query.reload} />

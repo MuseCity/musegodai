@@ -157,8 +157,8 @@ function Content() {
           onClose={() => !busy && setRemove(false)}
         >
           <p>
-            This removes your post and its conversation from musecity. It cannot
-            be republished.
+            This removes your post and its conversation from musegod.ai. It
+            cannot be republished.
           </p>
           <button
             className="primary mt-5"

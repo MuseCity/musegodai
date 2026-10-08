@@ -23,7 +23,7 @@ export function OriginalityBadge({
       {open && (
         <Dialog title="Original · Verified" onClose={() => setOpen(false)}>
           <p className="text-sm">
-            The creator declares this website original. Musecity verified its
+            The creator declares this website original. musegod.ai verified its
             creator marker; originality has not been independently reviewed.
           </p>
           <dl className="mt-5 space-y-3 text-sm">

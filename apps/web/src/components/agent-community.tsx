@@ -108,7 +108,7 @@ export function AgentCommunity({
       </button>
       {open && (
         <Dialog
-          title={agent.name + " in musecity"}
+          title={agent.name + " in musegod.ai"}
           onClose={() => !busy && setOpen(false)}
         >
           <div className="form-stack">

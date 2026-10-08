@@ -118,7 +118,7 @@ export function pageSeo(
 export function seoMeta(seo?: Seo, error?: unknown): MetaDescriptor[] {
   if (!seo || error)
     return [
-      { title: "Page unavailable — musecity" },
+      { title: "Page unavailable — musegod.ai" },
       { name: "robots", content: "noindex, follow" },
     ];
   return [
@@ -131,7 +131,7 @@ export function seoMeta(seo?: Seo, error?: unknown): MetaDescriptor[] {
         : "index, follow, max-image-preview:large",
     },
     { tagName: "link", rel: "canonical", href: seo.canonical },
-    { property: "og:site_name", content: "musecity" },
+    { property: "og:site_name", content: "musegod.ai" },
     { property: "og:type", content: seo.article ? "article" : "website" },
     { property: "og:title", content: seo.title },
     { property: "og:description", content: seo.description },
@@ -185,10 +185,10 @@ export function workSeo(
   const description =
     body.description ||
     (body.articleDocument ? articleText(body.articleDocument) : "") ||
-    `${body.title}, a ${body.type} shared by ${work.owner.name} on musecity.`;
+    `${body.title}, a ${body.type} shared by ${work.owner.name} on musegod.ai.`;
   const cover = body.coverMediaId || body.imageMediaIds?.[0];
   const seo = pageSeo(origin, url, {
-    title: body.title + " — musecity",
+    title: body.title + " — musegod.ai",
     description,
     image: cover ? "/media/" + cover + "?w=1536" : undefined,
     article: body.type === "article",
@@ -221,7 +221,7 @@ export function postSeo(
   comments: Page<CommentView>,
 ) {
   const seo = pageSeo(origin, url, {
-    title: excerpt(post.text, 65) + " — musecity",
+    title: excerpt(post.text, 65) + " — musegod.ai",
     description: post.text,
     article: true,
     image: post.mediaIds[0]
@@ -268,7 +268,7 @@ export function collectionSeo(
       ? {
           isPartOf: {
             "@type": "WebSite",
-            name: "musecity",
+            name: "musegod.ai",
             url: new URL("/", origin).href,
           },
         }

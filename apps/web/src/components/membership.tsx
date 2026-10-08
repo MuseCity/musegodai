@@ -19,7 +19,7 @@ export function MembershipCard({
       <section className="governance-panel">
         <h2>Everyone has a voice.</h2>
         <p>
-          Sign in to vote. Hold 100,000 MUSEGOD in your Musecity wallet to
+          Sign in to vote. Hold 100,000 MUSEGOD in your musegod.ai wallet to
           become a formal member and publish proposals.
         </p>
         <button
@@ -77,7 +77,7 @@ export function MembershipCard({
           {!query.busy && !query.error && query.data && (
             <p className="field-note">
               {query.data.balance === null
-                ? "No qualifying Musecity wallet."
+                ? "No qualifying musegod.ai wallet."
                 : `${formatUnits(BigInt(query.data.balance), 18)} MUSEGOD on Robinhood Chain.`}
             </p>
           )}
@@ -105,7 +105,7 @@ export function MembershipCard({
           </p>
           <p className="text-sm text-muted">
             {query.data.balance === null
-              ? "No qualifying Musecity wallet."
+              ? "No qualifying musegod.ai wallet."
               : `${formatUnits(BigInt(query.data.balance), 18)} MUSEGOD on Robinhood Chain.`}{" "}
             Checked {governanceDate(query.data.checkedAt)}.
           </p>

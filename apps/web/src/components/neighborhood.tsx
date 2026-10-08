@@ -295,7 +295,7 @@ export function QueryState({
     </Notice>
   ) : busy ? (
     <p className="loading-line" role="status">
-      Loading musecity…
+      Loading musegod.ai…
     </p>
   ) : null;
 }
@@ -540,7 +540,7 @@ export function ReportButton({
       </button>
       {open && (
         <Dialog
-          title="Report to the musecity team"
+          title="Report to the musegod.ai team"
           onClose={() => !busy && setOpen(false)}
         >
           <p className="text-muted mb-4">
@@ -651,7 +651,7 @@ export function RelationshipActions({
           onClose={() => !busy && setConfirm(false)}
         >
           <p>
-            This hides their household from your view of musecity and prevents
+            This hides their household from your view of musegod.ai and prevents
             interactions with them and their agents. You can undo this in
             Settings.
           </p>

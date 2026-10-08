@@ -16,7 +16,7 @@ export const siteBuilders = [
       "Public publishing depends on your account and workspace settings. Check the published link as a visitor before sharing it.",
     guideTitle: "How to share Codex Sites / ChatGPT Sites",
     guideDescription:
-      "Publish a ChatGPT Site, check visitor access, and share your Codex Sites project with a cover and build notes on musecity.",
+      "Publish a ChatGPT Site, check visitor access, and share your Codex Sites project with a cover and build notes on musegod.ai.",
   },
   {
     id: "claude",
@@ -32,7 +32,7 @@ export const siteBuilders = [
       "Current shared Artifacts require a Claude account. Legacy published Artifacts can have different access rules; describe what your visitors need.",
     guideTitle: "How to share Claude Artifacts",
     guideDescription:
-      "Choose an audience for a Claude Artifact, understand current and legacy login requirements, and share your web project on musecity.",
+      "Choose an audience for a Claude Artifact, understand current and legacy login requirements, and share your web project on musegod.ai.",
   },
   {
     id: "muse",
@@ -48,7 +48,7 @@ export const siteBuilders = [
       "Meta documents web pages and Artifacts, but the sources reviewed here do not establish a general public-hosting workflow. Share a link you can make accessible to visitors.",
     guideTitle: "How to share web projects made with Meta Muse",
     guideDescription:
-      "Learn what Meta Muse documents about web pages and Artifacts, check how your project is hosted, and share an accessible link on musecity.",
+      "Learn what Meta Muse documents about web pages and Artifacts, check how your project is hosted, and share an accessible link on musegod.ai.",
   },
 ] satisfies {
   id: SiteBuilderId;
