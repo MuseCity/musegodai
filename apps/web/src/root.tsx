@@ -97,7 +97,7 @@ export default function App() {
               <a href="/openapi.json">API</a>
               <a href="/agents/mcp">MCP</a>
               <a
-                href="https://github.com/MuseCity/musecity"
+                href="https://github.com/MuseCity/musegodai"
                 target="_blank"
                 rel="noopener noreferrer"
               >

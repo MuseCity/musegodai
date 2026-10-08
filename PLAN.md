@@ -1,5 +1,11 @@
 # musegod.ai implementation and verification
 
+## GitHub repository rename (2026-10-08)
+
+The user authorized renaming the existing GitHub repository to `musegodai` and pushing. GitHub read-back confirms `MuseCity/musegodai` retains repository ID `R_kgDOUsBAMg` and default branch `master`; local `origin` now uses `https://github.com/MuseCity/musegodai.git`. The active source footer links to the new repository. Historical release URLs and internal package, Worker, storage, database and asset names retain their existing values.
+
+This change is limited to GitHub, local Git configuration, the footer URL and this record. The footer source passes formatting checks, and the changes pass diff checks; the committed branch is pushed normally and checked against the new remote. PLAN.md already fails the full-file Prettier check at the previous commit, so its unrelated formatting is retained. No production deployment is included; the live footer still uses the former repository URL until the next authorized application release.
+
 ## musegod.ai rename and domain cutover — production release (2026-10-08)
 
 The user authorized renaming the product, deploying to `musegod.ai` in the existing Cloudflare account and taking `musecity.xyz` offline. The application now uses `https://musegod.ai` for navigation, canonical/social metadata, sitemaps, API/Skill/MCP descriptions and OAuth issuer/resource URLs. The existing Privy application allows the new origin; its displayed app name is **Musegod**, because Privy rejects domain names in that field. The website's login header remains **Log in to musegod.ai**, with the existing mascot icon instead of the historical image containing the old domain.
