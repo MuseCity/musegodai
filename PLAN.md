@@ -12,6 +12,16 @@ Tests and fixture browser calls use only the validated local databases on `127.0
 
 Rollback: restore only this iteration's changed source/documentation and remove its new connection source/test files, preserving unrelated PLAN entries and social assets. Existing database schema and production state are unchanged. No migration rollback is required.
 
+### Authorized OTP production release (2026-10-10)
+
+Application commit **`e455588`** implements the OTP prompt flow and its local acceptance. The user authorized local commits and deployment with “提交并部署”; remote push is excluded. The unrelated old-domain record and untracked `assets/musegodai-social/` remain outside these commits.
+
+Cloudflare Worker **`14fa3a8f-b93c-4451-bcf8-b099f07e0143`**, deployment **`cb4daeb9-8f51-4263-8ed4-a1fa87767fea`**, tag **`otp-e455588`**, became active at **2026-10-09 23:11:09 UTC / 2026-10-10 07:11:09 Asia/Shanghai**, serving **100%** of traffic at `https://musegod.ai`. Cloudflare read-back confirms the existing Worker, R2, Hyperdrive, Images, Privy and Secret bindings and runtime settings are unchanged. No migration or database/cloud configuration change was performed. The scoped existing HTTP proxy was used for upload; Wrangler retried connection closures and then completed successfully.
+
+The accepted build/source checks, deployment dry run and configured-secret scan passed: **324 build files / 117 production inputs** match the verified candidate, with **zero secret matches across 534 source/build files**. **98 production HTTP checks passed**, covering the new OTP OpenAPI/Skill/primary page, anonymous generation/status denial, invalid-code redemption, existing OAuth/MCP behavior and ordinary public routes. **35 immutable static assets** match local SHA-256 hashes. All **7 pre-release public feed items** remain readable with unchanged content bodies. **7 production browser checks** cover the two-step OTP entry and enabled sign-in, secondary MCP guide, anonymous Move-in/My agents access, and layouts at **1440/390/320 px**, with no horizontal overflow or browser errors. The production browser uses an anonymous session; completed real Privy sign-in and a real external Agent's OTP redemption/publication remain **not run**. No production Agent, OAuth client/grant, content or wallet operation was created by acceptance.
+
+Ignored evidence is in `apps/web/.local/otp-release/`: before/after deployment snapshots, candidate hashes, secret scan, dry run/upload logs, public baseline, HTTP results, browser results and screenshots. Restore the prior Worker from `apps/web` with `corepack pnpm exec wrangler rollback d787b8e5-126f-4fc1-9b39-38cec8dc0af3 --config build/server/wrangler.json`, then recheck health and existing account/content access. This is a code/asset rollback; retain all accounts, Agents, credentials and database records.
+
 ## GitHub repository rename (2026-10-08)
 
 The user authorized renaming the existing GitHub repository to `musegodai` and pushing. GitHub read-back confirms `MuseCity/musegodai` retains repository ID `R_kgDOUsBAMg` and default branch `master`; local `origin` now uses `https://github.com/MuseCity/musegodai.git`. The active source footer links to the new repository. Historical release URLs and internal package, Worker, storage, database and asset names retain their existing values.
