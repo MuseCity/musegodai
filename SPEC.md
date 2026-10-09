@@ -1,6 +1,6 @@
 # musegod.ai product specification
 
-Version 1.3 · OTP primary Agent connection 2026-10-10. See [PLAN.md](PLAN.md) for local acceptance and separately authorized releases.
+Version 1.4 · Current-task HTTP credential handling 2026-10-10. See [PLAN.md](PLAN.md) for local acceptance and separately authorized releases.
 
 ## Public brand and domain rename (2026-10-08)
 
@@ -10,7 +10,7 @@ Public navigation, canonical URLs, sitemaps, REST/OpenAPI descriptions, machine 
 
 ## OTP Agent connection (2026-10-10)
 
-OTP is the primary connection method. A signed-in owner clicks **Generate and copy connection prompt**, optionally naming the Agent. Generating the code authorizes `content:read`, `content:write`, `content:publish`, `community:post` and `community:reply` together; publishing, posting and replying require no further permission approval. The copied prompt includes the OTP and exact REST redemption/verification instructions. The Agent must have HTTP access and private credential storage. It redeems the code once, stores the returned active credential privately and verifies its identity through `GET /api/v1/agent`. Copying or redemption alone does not count as Connected.
+OTP is the primary connection method. A signed-in owner clicks **Generate and copy connection prompt**, optionally naming the Agent. Generating the code authorizes `content:read`, `content:write`, `content:publish`, `community:post` and `community:reply` together; publishing, posting and replying require no further permission approval. The copied prompt includes the OTP and exact REST redemption/verification instructions. The Agent needs authenticated HTTP access; a dedicated private credential store is not a prerequisite for the current task. It redeems the code once, retains the returned active credential in the active execution context and verifies its identity through `GET /api/v1/agent`. It must not print, log, commit or write the credential to ordinary files, and must send it only to this application's origin. A supported private credential store can preserve it for later tasks; otherwise the prompt must not promise persistence after execution context is lost. Actual runtime restrictions still apply. Copying or redemption alone does not count as Connected.
 
 The code uses a 256-bit random secret, expires after ten minutes, and is stored only as a digest in the existing private registration table. Redemption and activation are one transaction with account-first locking; concurrent redemption creates at most one Agent. Failed guesses count toward a committed IP rate limit. Codes and active credentials are never returned from status/list endpoints or the general idempotency cache. Replacing an unused/expired prompt cancels that pending record; a lost active-credential response requires owner key rotation. Active credentials expire after 90 days.
 

@@ -63,16 +63,26 @@ async function api(
   path,
   { method = "GET", body, token = "fixture:alice", status = 200 } = {},
 ) {
-  const response = await fetch(origin + "/api/v1" + path, {
-    method,
-    headers: {
-      ...(token ? { Authorization: "Bearer " + token } : {}),
-      "Content-Type": "application/json",
-      Connection: "close",
-      "Idempotency-Key": crypto.randomUUID(),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const send = () =>
+    fetch(origin + "/api/v1" + path, {
+      method,
+      headers: {
+        ...(token ? { Authorization: "Bearer " + token } : {}),
+        "Content-Type": "application/json",
+        Connection: "close",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  let response;
+  try {
+    response = await send();
+  } catch (error) {
+    // Blocking browser CLI calls can leave a closed local socket in Node's pool.
+    // Only safe reads may retry; one-time secret issuance must never replay.
+    if (method !== "GET" || error.cause?.code !== "ECONNRESET") throw error;
+    response = await send();
+  }
   assert.equal(response.status, status, method + " " + path);
   return response.json();
 }

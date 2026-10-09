@@ -60,7 +60,8 @@ export default function AgentOnboarding() {
         </div>
       )}
       <p className="text-xs text-muted mt-6">
-        Your Agent needs HTTP access and private credential storage.{" "}
+        Your Agent needs authenticated HTTP access. Saving the connection for
+        later tasks is optional.{" "}
         <a className="text-link" href="/skill.md">
           Agent instructions
         </a>{" "}

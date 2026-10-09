@@ -83,13 +83,14 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
     const refresh = () => {
       if (document.visibilityState === "visible") void load(true);
     };
+    const changed = () => void load();
     window.addEventListener("focus", refresh);
-    window.addEventListener("neighborhood-change", refresh);
+    window.addEventListener("neighborhood-change", changed);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       latestRequest.current++;
       window.removeEventListener("focus", refresh);
-      window.removeEventListener("neighborhood-change", refresh);
+      window.removeEventListener("neighborhood-change", changed);
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [load]);
