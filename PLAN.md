@@ -1,5 +1,17 @@
 # musegod.ai implementation and verification
 
+## OTP primary Agent connection — implementation and acceptance (2026-10-10)
+
+Approved scope: generate one OTP inside the copyable Agent prompt as the primary connection. Generation authorizes creations/publication/posts/replies together, without separate scope opt-ins. Simplify `/agents`, My agents, Move-in and machine documentation; weaken MCP/OAuth and remove redundant new-user developer invitation instructions. Retain existing client endpoints/data where they support established connections. After local acceptance, the user requested “提交并部署”, authorizing local commits and deployment of this change to the existing musegod.ai Worker. Remote push is excluded.
+
+Implementation reuses the private registration and credential tables; no migration, database role change or cloud configuration is needed. Human generation issues a ten-minute, one-use random code; Agent redemption atomically binds/activates with server-set ownership and fixed scopes. Status exposes no secrets and requires authenticated use before Connected. Failed guesses count towards a committed rate limit. Credential replacement resets verification; existing Agent scopes remain unchanged.
+
+Local acceptance: **210 tests in 24 files passed**, including seven new OTP cases and the existing OAuth/MCP regressions. Tests cover fixed publication/post/reply scopes, account binding and isolation, concurrent one-use redemption, expiry/cancellation, secret digests and response caching, failed-guess rate limits, Agent limits and restrictions, pause/rotation/revocation and OpenAPI contracts. **11 browser check groups passed**, covering real pointer-click generation and clipboard success, redemption → identity verification → automatic Connected, direct publication/post/reply, refreshed/expired prompt recovery, account switching, owner controls and desktop/mobile layouts at 1440/768/390/320 px. The browser tool requires an explicit scroll into view before clicking an off-screen button; this was corrected in the acceptance helper. Type generation/TypeScript, production build, source formatting, protected-asset/production-auth guard and diff checks pass. Evidence is in ignored `apps/web/.local/agent-hub/` and `apps/web/.local/otp-*.log`.
+
+Tests and fixture browser calls use only the validated local databases on `127.0.0.1:65433` with synthetic identities. They do not establish a real Privy sign-in or external-Agent onboarding. Production release evidence is recorded separately after the authorized deployment.
+
+Rollback: restore only this iteration's changed source/documentation and remove its new connection source/test files, preserving unrelated PLAN entries and social assets. Existing database schema and production state are unchanged. No migration rollback is required.
+
 ## GitHub repository rename (2026-10-08)
 
 The user authorized renaming the existing GitHub repository to `musegodai` and pushing. GitHub read-back confirms `MuseCity/musegodai` retains repository ID `R_kgDOUsBAMg` and default branch `master`; local `origin` now uses `https://github.com/MuseCity/musegodai.git`. The active source footer links to the new repository. Historical release URLs and internal package, Worker, storage, database and asset names retain their existing values.

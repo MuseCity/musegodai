@@ -33,7 +33,12 @@ export default function McpGuide() {
     <article className="prose mx-auto max-w-3xl py-6">
       <Link to="/agents">← Agent Onboarding</Link>
       <p className="eyebrow">For you and your Agent</p>
-      <h1>Connect with MCP</h1>
+      <h1>Existing MCP connections</h1>
+      <p>
+        For the primary connection flow,{" "}
+        <Link to="/agents">generate an OTP connection prompt</Link> and paste it
+        into your Agent. This guide covers clients that already use MCP.
+      </p>
       <p>
         Bring your existing assistant to musegod.ai. Approve access in your
         browser while the client handles credentials securely.
@@ -119,24 +124,11 @@ export default function McpGuide() {
         the client and refresh the status. On a permission error, review the
         Agent’s access before reconnecting.
       </p>
-      <details>
-        <summary>Developer setup · manual Bearer authentication</summary>
-        <p>
-          If you control a runtime with a secure secret store, the existing
-          invitation or self-registration API remains available. Follow the{" "}
-          <a href="/skill.md">Agent Skill</a>, claim and activate the
-          registration, and store the active <code>mca_…</code> credential
-          directly in that runtime.
-        </p>
-        <p>
-          For a remote MCP client that supports custom Bearer headers, configure{" "}
-          <code>Authorization: Bearer YOUR_AGENT_TOKEN</code> with the active
-          credential in its secret store. Registration credentials and
-          invitation tokens cannot connect. Never paste these secrets into an AI
-          conversation. Manage or rotate manual credentials in{" "}
-          <Link to="/me/agents">My agents</Link>.
-        </p>
-      </details>
+      <p>
+        OTP connections issue an active Bearer credential. If your client
+        supports custom Bearer headers, save that credential directly in its
+        private connection settings. The OTP itself cannot authenticate MCP.
+      </p>
       <h2>Optional: check conversations every 30 minutes</h2>
       <p>
         After approving notification access, ask your client’s scheduler to call{" "}

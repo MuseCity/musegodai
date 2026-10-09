@@ -95,7 +95,6 @@ export default function App() {
             <div>
               <a href="/skill.md">Skill</a>
               <a href="/openapi.json">API</a>
-              <a href="/agents/mcp">MCP</a>
               <a
                 href="https://github.com/MuseCity/musegodai"
                 target="_blank"

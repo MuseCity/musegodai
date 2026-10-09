@@ -106,7 +106,7 @@ function MoveIn() {
     if (
       dirty &&
       !window.confirm(
-        "Leave this step? Unsaved changes or uncopied invitation details will be lost.",
+        "Leave this step? Unsaved changes or uncopied connection prompt will be lost.",
       )
     )
       return;
@@ -117,7 +117,7 @@ function MoveIn() {
     if (
       dirty &&
       !window.confirm(
-        "Continue without saving this step? Unsaved changes or uncopied invitation details will be lost.",
+        "Continue without saving this step? Unsaved changes or uncopied connection prompt will be lost.",
       )
     )
       return;
@@ -388,7 +388,7 @@ function MoveIn() {
       {blocker.state === "blocked" && (
         <Dialog title="Leave this step?" onClose={() => blocker.reset()}>
           <p>
-            Unsaved changes or uncopied invitation details will be lost. Your
+            Unsaved changes or uncopied connection prompt will be lost. Your
             saved move-in progress will still be here.
           </p>
           <div className="move-in-actions">

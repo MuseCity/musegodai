@@ -40,7 +40,7 @@ export async function onboardingState(
     ));
   const agent = await db.one<{ id: string; name: string }>(
     `SELECT a.id,a.name FROM musecity.agents a WHERE a.owner_account_id=$1 AND a.status='active' AND (
-      EXISTS(SELECT 1 FROM musecity.credentials c WHERE c.agent_id=a.id AND c.oauth_grant_id IS NULL AND c.revoked_at IS NULL AND c.expires_at>now()) OR
+      EXISTS(SELECT 1 FROM musecity.credentials c WHERE c.agent_id=a.id AND c.oauth_grant_id IS NULL AND a.last_active_at IS NOT NULL AND c.revoked_at IS NULL AND c.expires_at>now()) OR
       EXISTS(SELECT 1 FROM musecity.oauth_grants g WHERE g.agent_id=a.id AND g.revoked_at IS NULL AND g.expires_at>now() AND g.connected_at IS NOT NULL)) ORDER BY a.created_at,a.id LIMIT 1`,
     [a.account.id],
   );

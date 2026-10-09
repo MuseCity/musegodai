@@ -1,13 +1,12 @@
-// Local fixture only: run with pnpm e2e:serve. No production writes.
+// Local fixture only. No production writes or real Privy identity.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import pg from "pg";
 import { assertLocalTarget } from "../scripts/local-target.ts";
-
 const origin = "http://127.0.0.1:5191";
-const session = "musecity-agent-hub-" + process.pid;
+const session = "musecity-otp-" + process.pid;
 const output = resolve(".local/agent-hub");
 mkdirSync(output, { recursive: true });
 const local = JSON.parse(readFileSync(".local/database.json", "utf8"));
@@ -15,7 +14,10 @@ assertLocalTarget(local.e2eAdminUrl, "musecity_e2e", "musecity_admin");
 const db = new pg.Client({ connectionString: local.e2eAdminUrl });
 const checks = [],
   agents = [],
-  works = [];
+  works = [],
+  posts = [],
+  comments = [],
+  connections = [];
 function browser(...args) {
   const result = JSON.parse(
     execFileSync("agent-browser", ["--session", session, "--json", ...args], {
@@ -36,6 +38,13 @@ function wait(condition) {
   );
 }
 function click(label, scope = "document") {
+  if (label.startsWith("Generate and copy")) {
+    evaluate(
+      "document.querySelector('.agent-connection button.primary').scrollIntoView({block:'center'})",
+    );
+    browser("click", ".agent-connection button.primary");
+    return;
+  }
   evaluate(
     "[..." +
       scope +
@@ -69,271 +78,309 @@ async function api(
 }
 const post = (path, body, extra = {}) =>
   api(path, { method: "POST", body, ...extra });
-const scopes = ["content:read", "content:write"];
-const name = "Hub browser " + Date.now();
-function card(agentName) {
-  return (
-    "[...document.querySelectorAll('.agent-card')].find(c=>c.querySelector('h3').textContent===" +
-    JSON.stringify(agentName) +
-    ")"
-  );
-}
+
+const name = "OTP browser " + Date.now();
+const card = (agentName) =>
+  "[...document.querySelectorAll('.agent-card')].find(c=>c.querySelector('h3').textContent===" +
+  JSON.stringify(agentName) +
+  ")";
 try {
   await db.connect();
   const html = await (await fetch(origin + "/agents")).text();
   for (const text of [
-    "Agent Onboarding",
-    "Connect from your AI client",
-    "Connect with OAuth",
-    "Developer setup",
+    "Connect your Agent",
+    "Generate and copy a connection prompt",
+    "Sign in to connect your Agent",
   ])
     assert.ok(html.includes(text));
-  assert.ok(html.includes('content="index, follow, max-image-preview:large"'));
   assert.ok(!html.includes("fixture:alice"));
   browser("open", origin + "/agents");
   browser("snapshot", "-i");
   wait(
-    "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Sign in to manage agents' && !b.disabled)",
-  );
-  assert.equal(
-    evaluate(
-      "document.querySelector('.header-agent-link[aria-current=page]').textContent",
-    ),
-    "Agent Onboarding",
+    "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Sign in to connect your Agent' && !b.disabled)",
   );
   assert.equal(evaluate("document.querySelectorAll('h1').length"), 1);
-  click("Copy", "document.querySelector('#connect .agent-copy')");
-  wait(
-    "document.querySelector('#connect [role=status]').textContent.length > 0",
+  assert.ok(
+    !evaluate(
+      "[...document.querySelectorAll('.primary')].some(b=>/OAuth|MCP/.test(b.textContent))",
+    ),
   );
   checks.push(
-    "anonymous SSR, active navbar, public guidance and copy feedback",
+    "anonymous SSR and two-step OTP guide without MCP/OAuth primary controls",
   );
-  for (const width of [1440, 1321, 1281, 1101, 1024, 768, 390, 320]) {
+  for (const width of [1440, 768, 390, 320]) {
     browser("set", "viewport", String(width), "900");
     assert.ok(
       evaluate("document.documentElement.scrollWidth <= innerWidth"),
-      "layout width " + width,
-    );
-    assert.ok(
-      evaluate(
-        "[...document.querySelectorAll('.primary-nav a, .header-agent-link')].every(a=>{const r=a.getBoundingClientRect();return r.x>=0 && r.right<=innerWidth;})",
-      ),
-      "navbar width " + width,
+      "public width " + width,
     );
     if ([1440, 390].includes(width))
-      browser("screenshot", output + "/public-" + width + ".png");
+      browser("screenshot", output + "/otp-public-" + width + ".png");
   }
   checks.push(
-    "four primary tabs and the onboarding text link visible without overflow at 320, 390, 768, 1024, 1101 and 1440 pixels",
+    "anonymous desktop/mobile layouts at 1440, 768, 390 and 320 pixels",
   );
-  browser("set", "viewport", "390", "844");
-  click("Sign in to manage agents");
+  // Give the UI a test-owned pending record so it never cancels existing fixture records.
+  const seed = await post(
+    "/me/agent-connections",
+    { name: name + " replacement" },
+    { status: 201 },
+  );
+  connections.push(seed.connectionId);
+  click("Sign in to connect your Agent");
   wait(
-    "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Create developer invitation')",
+    "!!document.querySelector('.agent-connection input') || !![...document.querySelectorAll('button')].find(b=>b.textContent==='Generate and copy a new prompt' && !b.disabled)",
   );
-  for (const width of [1440, 1321, 1281, 1101, 768, 390, 320]) {
-    browser("set", "viewport", String(width), "900");
-    assert.ok(
-      evaluate("document.documentElement.scrollWidth <= innerWidth"),
-      "signed-in layout width " + width,
-    );
-  }
-  browser("set", "viewport", "390", "844");
-  evaluate(
-    "[...document.querySelectorAll('#your-agents details')].find(d=>d.querySelector('summary')?.textContent==='Developer setup · manual credentials').open=true",
+  wait(
+    "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Generate and copy a new prompt' && !b.disabled)",
   );
-  click("Create developer invitation");
-  browser("snapshot", "-i");
   assert.equal(
     evaluate(
-      "document.querySelectorAll('dialog input[type=checkbox]:checked').length",
+      "document.querySelectorAll('.agent-connection input[type=checkbox]').length",
     ),
     0,
   );
-  assert.equal(
-    evaluate(
-      "[...document.querySelectorAll('dialog button')].find(b=>b.textContent==='Create invitation').disabled",
-    ),
-    true,
-  );
-  browser("find", "label", "Agent name", "fill", name);
-  evaluate(
-    "[...document.querySelectorAll('dialog input[type=checkbox]')].at(-1).click()",
-  );
-  click("Create invitation", dialog);
-  wait("!!document.querySelector('dialog .secret')");
-  // Secrets stay in process memory, outside reports and screenshots.
-  const instruction = evaluate(
-    "document.querySelector('dialog .secret').textContent",
-  );
-  const invitation = JSON.parse(instruction);
-  const invitationToken = invitation.invitationToken;
-  assert.equal(invitation.name, name);
-  assert.deepEqual(invitation.requestedScopes, scopes);
-  assert.ok(invitationToken.startsWith("mci_"));
-  closeDialog();
-  const registration = await post(
-    "/agent-registrations",
-    { name, requestedScopes: scopes, invitationToken },
-    { token: null, status: 201 },
-  );
-  assert.equal(registration.status, "approved");
-  assert.equal(registration.claimPath, null);
+  click("Generate and copy a new prompt");
   wait(
-    "document.querySelector('#your-agents').innerText.includes('Awaiting activation')",
+    "!!document.querySelector('textarea[aria-label=\"Agent connection prompt\"]')",
+  );
+  let prompt = evaluate(
+    "document.querySelector('textarea[aria-label=\"Agent connection prompt\"]').value",
+  );
+  const otp = prompt.match(/mcr_[0-9a-f]{64}/)?.[0];
+  assert.ok(otp);
+  assert.ok(prompt.includes("POST " + origin + "/api/v1/agent-connections"));
+  const pending = (await api("/me/agent-registrations")).find(
+    (r) => r.status === "approved",
+  );
+  connections.push(pending.id);
+  assert.equal(
+    (await api("/me/agent-connections/" + seed.connectionId)).status,
+    "cancelled",
+  );
+  assert.ok(
+    evaluate(
+      "document.querySelector('.agent-connection').innerText.includes('Waiting for your Agent')",
+    ),
+  );
+  assert.ok(
+    !evaluate(
+      "document.querySelector('.agent-connection').innerText.includes('is connected.')",
+    ),
+  );
+  const copyButton = evaluate(
+    "[...document.querySelectorAll('.agent-connection button')].find(b=>/Copied|Copy connection/.test(b.textContent))?.textContent",
+  );
+  assert.ok(
+    copyButton?.includes("Copied"),
+    "Native clipboard write must succeed after the browser click",
+  );
+  checks.push(
+    "one-click generation/copy with optional name, no scope checkbox, exact REST prompt and pending status",
   );
   const active = await post(
-    "/agent-registrations/" + registration.registrationId + "/activate",
-    undefined,
-    { token: registration.registrationToken, status: 201 },
-  );
-  agents.push(active.agentId);
-  assert.deepEqual(active.scopes, scopes);
-  wait("!!" + card(name));
-  checks.push(
-    "draft-only invitation requires confirmation and polls registration to activation",
-  );
-
-  evaluate("document.querySelector('#developer-setup').open=true");
-  const draftBody = JSON.parse(
-    evaluate(
-      "[...document.querySelectorAll('#developer-setup .agent-copy code')].at(-1).textContent",
-    ),
-  );
-  const diagnostic = await api("/agent", { token: active.credential.token });
-  assert.equal(diagnostic.id, active.agentId);
-  const draft = await post("/works", draftBody, {
-    token: active.credential.token,
-    status: 201,
-  });
-  works.push(draft.workId);
-  assert.equal(draft.status, "draft");
-  assert.equal(
-    (
-      await api("/works/" + draft.workId + "?draft=true", {
-        token: active.credential.token,
-      })
-    ).workId,
-    draft.workId,
-  );
-  await api("/works/" + draft.workId, { token: null, status: 404 });
-  checks.push("displayed REST draft example succeeds and stays private");
-
-  for (const [action, state] of [
-    ["Pause", "paused"],
-    ["Resume", "active"],
-  ]) {
-    click(action, card(name));
-    click("Confirm", dialog);
-    wait(card(name) + "?.innerText.includes(" + JSON.stringify(state) + ")");
-    await api("/works/" + draft.workId + "?draft=true", {
-      token: active.credential.token,
-      status: state === "paused" ? 403 : 200,
-    });
-  }
-  click("Rotate key", card(name));
-  click("Confirm", dialog);
-  wait("!!document.querySelector('dialog .secret')");
-  const rotated = evaluate(
-    "document.querySelector('dialog .secret').textContent",
-  );
-  closeDialog();
-  await api("/agent", { token: active.credential.token, status: 401 });
-  await api("/agent", { token: rotated });
-  click("View activity", card(name));
-  wait(
-    "!!document.querySelector('dialog')?.innerText.includes('Created a draft')",
-  );
-  closeDialog();
-  checks.push(
-    "embedded pause/resume, rotation and activity preserve existing behavior",
-  );
-  click("Switch test account");
-  wait(
-    "sessionStorage.getItem('musecity.fixture-user') === 'bob' && " +
-      "!document.querySelector('#your-agents').innerText.includes('Loading agents…') && !" +
-      card(name),
-  );
-  click("Switch test account");
-  wait(
-    "sessionStorage.getItem('musecity.fixture-user') === 'alice' && !!" +
-      card(name),
-  );
-  checks.push("account switch clears the previous owner's private agents");
-
-  const self = await post(
-    "/agent-registrations",
-    { name: name + " self", requestedScopes: scopes },
+    "/agent-connections",
+    { otp },
     { token: null, status: 201 },
   );
-  browser("open", origin + self.claimPath);
-  browser("snapshot", "-i");
+  agents.push(active.agentId);
+  const token = active.credential.token;
+  assert.deepEqual(active.scopes, [
+    "content:read",
+    "content:write",
+    "content:publish",
+    "community:post",
+    "community:reply",
+  ]);
   wait(
-    "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Claim and approve agent')",
+    "document.querySelector('.agent-connection').innerText.includes('Paired')",
   );
-  assert.equal(evaluate("location.hash"), "");
-  evaluate("document.querySelector('main input[type=checkbox]').click()");
-  click("Claim and approve agent");
-  wait("document.body.innerText.includes('Your agent is approved.')");
-  click("Continue Agent Onboarding");
+  assert.equal(
+    (await api("/me/agent-connections/" + pending.id)).status,
+    "awaiting_verification",
+  );
+  const identity = await api("/agent", { token });
+  assert.equal(identity.id, active.agentId);
   wait(
-    "location.pathname==='/agents' && !!document.querySelector('#your-agents')",
+    "document.querySelector('.agent-connection').innerText.includes('is connected.')",
   );
-  const selfActive = await post(
-    "/agent-registrations/" + self.registrationId + "/activate",
-    undefined,
-    { token: self.registrationToken, status: 201 },
+  wait(card(identity.name) + "?.innerText.includes('Connected')");
+  assert.ok(
+    !evaluate(
+      "document.querySelector('textarea[aria-label=\"Agent connection prompt\"]')",
+    ),
   );
-  agents.push(selfActive.agentId);
-  wait("!!" + card(name + " self"));
-  checks.push(
-    "self-registration, private claim, explicit approval and return to the hub",
-  );
-
-  const expired = await post(
-    "/me/agent-invitations",
-    { name: name + " expired", scopes, confirmed: true },
-    { status: 201 },
-  );
-  await db.query(
-    "UPDATE musecity.invitations SET expires_at=now()-interval '1 second' WHERE id=$1",
-    [expired.invitationId],
-  );
-  click("Refresh", "document.querySelector('#your-agents')");
-  wait(
-    "document.querySelector('#your-agents').innerText.includes('Expired · cancel to start again')",
-  );
-  const row =
-    "[...document.querySelectorAll('#your-agents .tab-option')].find(e=>e.textContent.includes(" +
-    JSON.stringify(name + " expired") +
-    "))";
-  click("Cancel", row);
-  wait("!" + row);
-  checks.push(
-    "expired invitations remain visible and can be cancelled explicitly",
-  );
-
-  for (const agentName of [name, name + " self"]) {
-    click("Revoke", card(agentName));
-    click("Confirm", dialog);
-    wait(card(agentName) + "?.innerText.includes('revoked')");
-  }
-  await api("/agent", { token: rotated, status: 401 });
-  checks.push("revocation from unified management invalidates the active key");
-  browser("open", origin + "/agents/mcp");
-  wait("document.body.innerText.includes('Connect with MCP')");
   assert.equal(
     evaluate(
-      "document.querySelector('.header-agent-link[aria-current=page]').textContent",
+      "document.querySelectorAll('.agent-connection [role=alert]').length",
     ),
-    "Agent Onboarding",
+    0,
   );
-  browser("open", origin + "/me/agents");
-  wait("!!" + card(name));
-  assert.equal(evaluate("document.querySelectorAll('h1').length"), 1);
   checks.push(
-    "existing MCP and My agents URLs work and link back to onboarding",
+    "atomic redemption, awaiting-verification state and automatic Connected only after authenticated Agent use",
+  );
+  for (const width of [1440, 390, 320]) {
+    browser("set", "viewport", String(width), "900");
+    assert.ok(
+      evaluate("document.documentElement.scrollWidth <= innerWidth"),
+      "connected width " + width,
+    );
+    if ([1440, 390].includes(width))
+      browser("screenshot", output + "/otp-connected-" + width + ".png");
+  }
+  const work = await post(
+    "/works",
+    {
+      type: "article",
+      title: name,
+      description: "OTP acceptance",
+      aiDeclaration: true,
+      aiTools: ["Local fixture"],
+      articleDocument: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Connected using one prompt." }],
+          },
+        ],
+      },
+    },
+    { token, status: 201 },
+  );
+  works.push(work.workId);
+  const published = await post(
+    "/works/" + work.workId + "/publish",
+    { revisionId: work.revisionId },
+    { token },
+  );
+  assert.equal(published.status, "published");
+  const update = await post(
+    "/posts",
+    { kind: "update", text: name },
+    { token, status: 201 },
+  );
+  posts.push(update.id);
+  const reply = await post(
+    "/posts/" + update.id + "/comments",
+    { text: "OTP reply" },
+    { token, status: 201 },
+  );
+  comments.push(reply.id);
+  checks.push(
+    "creation publication, community post and reply succeed directly with generated permissions",
+  );
+  browser("open", origin + "/move-in");
+  wait(
+    "document.body.innerText.includes('Your Muse') || document.body.innerText.includes('Make yourself at home')",
+  );
+  assert.ok(
+    !evaluate(
+      "document.body.innerText.includes('Connect your client with OAuth')",
+    ),
+  );
+  checks.push(
+    "Move-in retains the owner guide and has no OAuth/manual invitation onboarding",
+  );
+  browser("open", origin + "/agents");
+  wait("!!" + card(identity.name));
+  click("Pause", card(identity.name));
+  click("Confirm", dialog);
+  wait(card(identity.name) + "?.innerText.includes('paused')");
+  await post(
+    "/posts",
+    { kind: "update", text: "Paused" },
+    { token, status: 403 },
+  );
+  click("Resume", card(identity.name));
+  click("Confirm", dialog);
+  wait(card(identity.name) + "?.innerText.includes('active')");
+  checks.push(
+    "owner pause/resume controls OTP Agent content actions through the UI",
+  );
+  const path = "/me/agents/" + active.agentId;
+  const rotated = await post(path + "/credentials/rotate", { confirmed: true });
+  await api("/agent", { token, status: 401 });
+  assert.equal(
+    (await api("/me/agent-connections/" + pending.id)).status,
+    "awaiting_verification",
+  );
+  await api("/agent", { token: rotated.credential.token });
+  checks.push(
+    "credential replacement invalidates the old key and requires verification again",
+  );
+  const lost = await post(
+    "/me/agent-connections",
+    { name: name + " lost" },
+    { status: 201 },
+  );
+  connections.push(lost.connectionId);
+  browser("open", origin + "/agents");
+  wait(
+    "document.querySelector('.agent-connection').innerText.includes('Generate a new prompt if you no longer have it')",
+  );
+  assert.ok(
+    !evaluate(
+      "document.querySelector('textarea[aria-label=\"Agent connection prompt\"]')",
+    ),
+  );
+  await db.query(
+    "UPDATE musecity.registrations SET expires_at=now()-interval '1 second' WHERE id=$1",
+    [lost.connectionId],
+  );
+  click("Refresh connection", "document.querySelector('.agent-connection')");
+  wait(
+    "document.querySelector('.agent-connection').innerText.includes('has expired')",
+  );
+  click("Generate and copy a new prompt");
+  wait(
+    "!!document.querySelector('textarea[aria-label=\"Agent connection prompt\"]')",
+  );
+  const replacement = (await api("/me/agent-registrations")).find(
+    (r) => r.status === "approved",
+  );
+  connections.push(replacement.id);
+  wait(
+    "[...document.querySelectorAll('.tab-option')].some(row=>row.textContent.includes(" +
+      JSON.stringify(name + " lost") +
+      "))",
+  );
+  assert.equal(
+    (await api("/me/agent-connections/" + lost.connectionId)).status,
+    "cancelled",
+  );
+  checks.push(
+    "refresh never recovers the secret; expired code replacement cancels its own pending record",
+  );
+  evaluate(
+    "sessionStorage.setItem('musecity.fixture-user','bob'); location.reload()",
+  );
+  wait(
+    "!document.querySelector('textarea[aria-label=\"Agent connection prompt\"]') && !document.body.innerText.includes('" +
+      name +
+      "')",
+  );
+  await api("/me/agent-connections/" + replacement.id, {
+    token: "fixture:bob",
+    status: 404,
+  });
+  checks.push(
+    "account switching clears connection prompts and isolates status and Agent lists",
+  );
+  evaluate(
+    "sessionStorage.setItem('musecity.fixture-user','alice'); location.reload()",
+  );
+  wait("!!" + card(identity.name));
+  click("Revoke", card(identity.name));
+  click("Confirm", dialog);
+  wait(card(identity.name) + "?.innerText.includes('revoked')");
+  await api("/agent", { token: rotated.credential.token, status: 401 });
+  browser("open", origin + "/me/agents");
+  wait("!!document.querySelector('.agent-connection')");
+  browser("open", origin + "/agents/mcp");
+  wait("document.body.innerText.includes('Existing MCP connections')");
+  checks.push(
+    "revocation blocks access; My agents OTP entry and secondary existing-MCP guide remain available",
   );
   assert.deepEqual(browser("errors").errors ?? [], []);
   writeFileSync(
@@ -341,7 +388,8 @@ try {
     JSON.stringify(
       {
         origin,
-        evidence: "local fixture identity and PostgreSQL only",
+        evidence:
+          "local fixture identity and PostgreSQL only; no external Agent or real Privy login",
         checks,
       },
       null,
@@ -350,11 +398,12 @@ try {
   );
   console.log(JSON.stringify({ passed: checks.length, checks }, null, 2));
 } catch (error) {
+  browser("screenshot", output + "/otp-failure.png");
   writeFileSync(
     output + "/failure.json",
     JSON.stringify(
       evaluate(
-        "({path:location.pathname,user:sessionStorage.getItem('musecity.fixture-user'),alerts:[...document.querySelectorAll('[role=alert]')].map(e=>e.textContent),agents:[...document.querySelectorAll('.agent-card h3')].map(e=>e.textContent)})",
+        "({path:location.pathname,alerts:[...document.querySelectorAll('[role=alert]')].map(e=>e.textContent)})",
       ),
       null,
       2,
@@ -362,11 +411,32 @@ try {
   );
   throw error;
 } finally {
+  for (const id of comments) await api("/comments/" + id, { method: "DELETE" });
+  for (const id of posts) {
+    const row = await api("/posts/" + id);
+    await api("/posts/" + id, {
+      method: "DELETE",
+      body: { revision: row.revision },
+    });
+  }
   for (const id of works) await api("/works/" + id, { method: "DELETE" });
   for (const id of agents) {
     const agent = await api("/me/agents/" + id);
     if (agent.status !== "revoked")
       await post("/me/agents/" + id + "/revoke", { confirmed: true });
+  }
+  for (const row of await api("/me/agent-registrations")) {
+    if (
+      row.status === "approved" &&
+      row.name.startsWith(name) &&
+      !connections.includes(row.id)
+    )
+      connections.push(row.id);
+  }
+  for (const id of connections) {
+    const row = await api("/me/agent-connections/" + id);
+    if (!row.agentId && row.status !== "cancelled")
+      await api("/me/agent-registrations/" + id, { method: "DELETE" });
   }
   await db.end();
   browser("close");

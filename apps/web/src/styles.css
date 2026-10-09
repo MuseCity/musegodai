@@ -2334,7 +2334,7 @@ fieldset:disabled {
   max-width: 1100px;
   margin: 0 auto;
   display: grid;
-  gap: 36px;
+  gap: 24px;
 }
 .agent-onboarding-hero {
   display: flex;
@@ -2353,38 +2353,6 @@ fieldset:disabled {
   color: var(--color-brand);
   stroke-width: 1.2;
 }
-.agent-section-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 24px;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--color-brand);
-}
-.agent-section-nav a:hover {
-  text-decoration: underline;
-}
-.agent-onboarding-grid,
-.agent-permissions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
-}
-.agent-permissions {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-.agent-permissions .panel {
-  padding: 20px;
-}
-.agent-permissions p:not(.eyebrow) {
-  font-size: 13px;
-  color: var(--color-muted);
-  margin: 12px 0;
-}
-.agent-permissions code {
-  font-size: 11px;
-  overflow-wrap: anywhere;
-}
 .agent-onboarding .panel,
 .agent-onboarding section {
   min-width: 0;
@@ -2395,32 +2363,16 @@ fieldset:disabled {
 .agent-steps {
   list-style: decimal;
   padding-left: 20px;
-  margin: 20px 0;
+  margin: 0;
   font-size: 14px;
 }
 .agent-steps li + li {
   margin-top: 12px;
 }
 .agent-steps code,
-.agent-details code,
-.agent-onboarding-grid p code {
+.agent-details code {
   font-size: 12px;
   overflow-wrap: anywhere;
-}
-.agent-copy {
-  border: 1px solid var(--color-line);
-  border-radius: 12px;
-  padding: 14px;
-  background: var(--color-canvas);
-}
-.agent-copy pre {
-  font-size: 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  margin-top: 10px;
-}
-.agent-copy [role="status"]:empty {
-  display: none;
 }
 .agent-details {
   border-top: 1px solid var(--color-line);
@@ -2432,31 +2384,9 @@ fieldset:disabled {
   font-size: 14px;
   color: var(--color-brand);
 }
-.agent-signin {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 16px;
-}
-.agent-success-note {
-  padding: 20px;
-  border-left: 3px solid var(--color-gold);
-  margin-top: 20px;
-  font-size: 14px;
-  background: var(--color-mint);
-}
-@media (max-width: 900px) {
-  .agent-permissions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
 @media (max-width: 680px) {
   .agent-onboarding {
     gap: 28px;
-  }
-  .agent-onboarding-grid,
-  .agent-permissions {
-    grid-template-columns: minmax(0, 1fr);
   }
   .agent-onboarding-hero {
     padding: 24px;

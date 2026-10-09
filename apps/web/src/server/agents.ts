@@ -2,7 +2,12 @@ import type { Database } from "./database";
 import { audit, type Actor } from "./auth";
 import { requireValue } from "./errors";
 import { id, secret, digest, future } from "./crypto";
-import { type Scope, type AgentView } from "../shared/contracts";
+import {
+  connectionScopes,
+  type Scope,
+  type AgentView,
+  type AgentConnectionStatus,
+} from "../shared/contracts";
 import type { AgentRow } from "./schema";
 type Registration = {
   id: string;
@@ -15,6 +20,86 @@ type Registration = {
   agent_id: string | null;
 };
 const expirySeconds = 86400;
+export async function createConnection(db: Database, a: Actor, name: string) {
+  const connectionId = id("reg");
+  const otp = secret("mcr");
+  const expiresAt = future(600);
+  const count = await db.one<{ n: string }>(
+    "SELECT count(*) AS n FROM musecity.agents WHERE owner_account_id=$1 AND status<>'revoked'",
+    [a.account.id],
+  );
+  requireValue(
+    Number(count?.n) < 20,
+    409,
+    "AGENT_LIMIT",
+    "This account has reached its 20-agent limit.",
+  );
+  await db.query(
+    "INSERT INTO musecity.registrations(id,name,requested_scopes,approved_scopes,owner_account_id,token_hash,status,expires_at) VALUES($1,$2,$3,$3,$4,$5,'approved',$6)",
+    [
+      connectionId,
+      name,
+      JSON.stringify(connectionScopes),
+      a.account.id,
+      await digest(otp),
+      expiresAt,
+    ],
+  );
+  await audit(db, a, "connection.create", connectionId);
+  return { connectionId, otp, expiresAt };
+}
+export async function redeemConnection(db: Database, otp: string) {
+  const record = await db.one<{ id: string }>(
+    "SELECT id FROM musecity.registrations WHERE token_hash=$1 AND owner_account_id IS NOT NULL",
+    [await digest(otp)],
+  );
+  requireValue(record, 401, "INVALID_CREDENTIAL", "Invalid connection code.");
+  // Activation locks the owner before the registration and issues the credential
+  // in this transaction. Concurrent redemption can succeed only once.
+  return activate(db, record.id, otp);
+}
+export async function connectionStatus(
+  db: Database,
+  a: Actor,
+  connectionId: string,
+): Promise<AgentConnectionStatus> {
+  const record = await db.one<Registration>(
+    "SELECT * FROM musecity.registrations WHERE id=$1 AND owner_account_id=$2",
+    [connectionId, a.account.id],
+  );
+  requireValue(record, 404, "NOT_FOUND", "Connection not found.");
+  const agent = record.agent_id
+    ? await db.one<AgentRow>(
+        "SELECT * FROM musecity.agents WHERE id=$1 AND owner_account_id=$2",
+        [record.agent_id, a.account.id],
+      )
+    : null;
+  const credential =
+    agent &&
+    (await db.one<{ id: string }>(
+      "SELECT id FROM musecity.credentials WHERE agent_id=$1 AND revoked_at IS NULL AND expires_at>now() LIMIT 1",
+      [agent.id],
+    ));
+  return {
+    connectionId: record.id,
+    name: record.name,
+    expiresAt: record.expires_at.toISOString(),
+    status: agent
+      ? agent.status === "revoked" || !credential
+        ? "revoked"
+        : agent.status === "paused"
+          ? "paused"
+          : agent.last_active_at
+            ? "connected"
+            : "awaiting_verification"
+      : record.status === "cancelled"
+        ? "cancelled"
+        : record.expires_at <= new Date()
+          ? "expired"
+          : "waiting",
+    agentId: agent?.id ?? null,
+  };
+}
 export const agentView = (a: AgentRow): AgentView => ({
   id: a.id,
   name: a.name,
@@ -367,6 +452,11 @@ export async function changeAgent(
     await db.query(
       `UPDATE musecity.oauth_requests r SET status='denied' WHERE r.status='approved' AND EXISTS(
       SELECT 1 FROM musecity.oauth_grants g WHERE g.agent_id=$1 AND g.owner_account_id=r.owner_account_id AND g.client_id=r.client_id)`,
+      [agentId],
+    );
+  if (action === "rotate" && !oauthAgent)
+    await db.query(
+      "UPDATE musecity.agents SET last_active_at=NULL WHERE id=$1",
       [agentId],
     );
   return action === "rotate" && !oauthAgent

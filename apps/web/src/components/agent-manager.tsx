@@ -2,13 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, Copy } from "lucide-react";
 import { Link } from "react-router";
 import { useApi, errorMessage } from "./api";
-import {
-  type AgentView,
-  type Scope,
-  draftScopes,
-  publishScopes,
-} from "../shared/contracts";
-import { AgentCommunity, CommunityPermissions } from "./agent-community";
+import { type AgentView } from "../shared/contracts";
+import { AgentConnection } from "./agent-connection";
+import { AgentCommunity } from "./agent-community";
 import { Notice, Dialog, Empty } from "./ui";
 type Activity = {
   id: string;
@@ -27,6 +23,7 @@ const activityLabel: Record<string, string> = {
   "agent.resume": "Resumed agent",
   "agent.revoke": "Revoked access",
   "agent.rotate": "Replaced credential",
+  "agent.verify": "Verified connection",
 };
 type Pending = {
   id: string;
@@ -44,15 +41,7 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
   const [invites, setInvites] = useState<Pending[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [invite, setInvite] = useState(false);
   const [name, setName] = useState("");
-  const [autonomous, setAutonomous] = useState(false);
-  const [communityScopes, setCommunityScopes] = useState<Scope[]>([]);
-  const invitationScopes = [
-    ...(autonomous ? publishScopes : draftScopes),
-    ...communityScopes,
-  ];
-  const [accepted, setAccepted] = useState(false);
   const [secret, setSecret] = useState("");
   const [action, setAction] = useState<{
     agent: AgentView;
@@ -95,10 +84,12 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
       if (document.visibilityState === "visible") void load(true);
     };
     window.addEventListener("focus", refresh);
+    window.addEventListener("neighborhood-change", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       latestRequest.current++;
       window.removeEventListener("focus", refresh);
+      window.removeEventListener("neighborhood-change", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [load]);
@@ -106,7 +97,13 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
     [...pending, ...invites].some(
       (v) => new Date(v.expires_at).getTime() > Date.now(),
     ) ||
-    agents?.some((agent) => agent.oauthConnection?.status === "authorized");
+    agents?.some(
+      (agent) =>
+        agent.oauthConnection?.status === "authorized" ||
+        (!agent.oauthConnection &&
+          agent.status === "active" &&
+          !agent.lastActiveAt),
+    );
   useEffect(() => {
     if (!waiting || error) return;
     const timer = window.setInterval(() => {
@@ -114,38 +111,6 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
     }, 5000);
     return () => window.clearInterval(timer);
   }, [load, waiting, error]);
-  async function create() {
-    if (!accepted) return;
-    setBusy(true);
-    setError("");
-    try {
-      const result = await api<{ invitationToken: string }>(
-        "/me/agent-invitations",
-        {
-          name,
-          scopes: invitationScopes,
-          confirmed: true,
-        },
-      );
-      setInvite(false);
-      setSecret(
-        JSON.stringify(
-          {
-            name,
-            invitationToken: result.invitationToken,
-            requestedScopes: invitationScopes,
-          },
-          null,
-          2,
-        ),
-      );
-      await load();
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }
   async function perform() {
     if (!action) return;
     setBusy(true);
@@ -218,11 +183,9 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
           >
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
-          <Link className="primary" to="/agents/mcp">
-            Connect with OAuth
-          </Link>
         </div>
       </div>
+      {!embedded && <AgentConnection />}
       {error && <Notice>{error}</Notice>}
       {!agents && !error ? (
         <div className="state">Loading agents…</div>
@@ -267,8 +230,9 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
               )}
               {!a.oauthConnection && (
                 <p className="text-xs text-muted">
-                  Manual credential · active status does not prove a tested
-                  client connection.
+                  {a.lastActiveAt
+                    ? "Connected · verified Agent request received"
+                    : "Paired · waiting for your Agent to verify the connection"}
                 </p>
               )}
               <p className="text-xs text-muted">
@@ -352,34 +316,9 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
         </div>
       ) : (
         <Empty title="Good company for your creations.">
-          <p>
-            Connect your client with OAuth. Your Agent starts with private
-            drafts.
-          </p>
+          <p>Copy a connection prompt above and paste it into your Agent.</p>
         </Empty>
       )}
-      <details className="panel agent-details mt-7">
-        <summary>Developer setup · manual credentials</summary>
-        <p className="text-sm text-muted mt-4">
-          Use an invitation only for a runtime you control with a secure secret
-          store. Do not paste invitation or credential secrets into an AI
-          conversation. For ChatGPT and other supported MCP clients, use OAuth
-          above.
-        </p>
-        <button
-          className="secondary mt-4"
-          onClick={() => {
-            setName("");
-            setAutonomous(false);
-            setCommunityScopes([]);
-            setAccepted(false);
-            setInvite(true);
-            setError("");
-          }}
-        >
-          Create developer invitation
-        </button>
-      </details>
       {(pending.length > 0 || invites.length > 0) && (
         <div className="panel mt-7">
           <h3 className="mb-4">Waiting to connect</h3>
@@ -394,8 +333,8 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
                   {new Date(v.expires_at).getTime() <= Date.now()
                     ? "Expired · cancel to start again"
                     : v.kind === "registrations"
-                      ? "Awaiting activation"
-                      : "Invitation open"}
+                      ? "Waiting for your Agent"
+                      : "Connection code open"}
                 </span>
               </div>
               <button
@@ -408,78 +347,9 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
           ))}
         </div>
       )}
-      {invite && (
-        <Dialog
-          title="Create a developer invitation"
-          onClose={() => !busy && setInvite(false)}
-        >
-          <div className="form-stack">
-            <label className="field">
-              Agent name
-              <input
-                value={name}
-                maxLength={80}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Studio assistant"
-              />
-            </label>
-            <label className="flex gap-3 items-start">
-              <input
-                type="checkbox"
-                checked={autonomous}
-                onChange={(e) => {
-                  setAutonomous(e.target.checked);
-                  setAccepted(false);
-                }}
-              />
-              <span>
-                <strong className="text-sm">
-                  Allow independent publishing
-                </strong>
-                <span className="block text-xs text-muted mt-1">
-                  Otherwise, it submits drafts for you to review and publish.
-                </span>
-              </span>
-            </label>
-            <CommunityPermissions
-              selected={communityScopes}
-              onChange={(v) => {
-                setCommunityScopes(v);
-                setAccepted(false);
-              }}
-            />
-            <label className="flex gap-3 items-start text-sm">
-              <input
-                type="checkbox"
-                checked={accepted}
-                onChange={(e) => setAccepted(e.target.checked)}
-              />
-              <span>
-                I authorize this agent to{" "}
-                {autonomous
-                  ? "publish its creations publicly"
-                  : "create drafts"}{" "}
-                under my account
-                {communityScopes.length > 0
-                  ? ", with the selected community permissions"
-                  : ""}
-                .
-              </span>
-            </label>
-            {error && <Notice>{error}</Notice>}
-            <button
-              className="primary w-full"
-              disabled={busy || !name.trim() || !accepted}
-              onClick={() => void create()}
-            >
-              {busy ? "Creating…" : "Create invitation"}
-            </button>
-          </div>
-        </Dialog>
-      )}
       {secret && (
         <Dialog
-          title="Save this private connection detail"
+          title="Save the replacement credential"
           onClose={() => {
             setSecret("");
             setCopied(false);
@@ -487,9 +357,8 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
         >
           <p className="text-muted text-sm mb-4">
             Shown once. Save this directly in your trusted runtime’s secret
-            store. Do not paste it into an AI conversation. If lost, rotate a
-            manual active key, or cancel the unfinished connection before
-            creating a new invitation.
+            store. Do not paste it into an AI conversation. If lost, rotate the
+            active key again in My agents.
           </p>
           <code className="secret">{secret}</code>
           <button

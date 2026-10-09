@@ -12,6 +12,7 @@ import {
   deduplicate,
   lookupIdempotency,
   rateLimit,
+  audit,
   type Actor,
   type VerifyHuman,
 } from "./auth";
@@ -864,6 +865,45 @@ export function createApi(s: Services, mcpCredential?: string) {
           ),
         ),
   );
+  app.post("/api/v1/me/agent-connections", async (c) => {
+    const body = await json(
+      c,
+      z.object({ name: nameSchema.default("My Agent") }).strict(),
+    );
+    return c.json(
+      await authed(c, undefined, true, (d, a) =>
+        agentService.createConnection(d, a, body.name),
+      ),
+      201,
+    );
+  });
+  app.get("/api/v1/me/agent-connections/:id", async (c) =>
+    c.json(
+      await authed(c, undefined, true, (d, a) =>
+        agentService.connectionStatus(d, a, c.req.param("id")),
+      ),
+    ),
+  );
+  app.post("/api/v1/agent-connections", async (c) => {
+    // Commit the attempt counter separately so failed code guesses count too.
+    await db((d) =>
+      rateLimit(
+        d,
+        "connection:" + (c.req.header("cf-connecting-ip") ?? "local"),
+        30,
+      ),
+    );
+    const body = await json(
+      c,
+      z.object({ otp: z.string().regex(/^mcr_[0-9a-f]{64}$/) }).strict(),
+    );
+    return c.json(
+      await db((d) =>
+        d.transaction(() => agentService.redeemConnection(d, body.otp)),
+      ),
+      201,
+    );
+  });
   app.post("/api/v1/agent-registrations", async (c) => {
     const body = await json(
       c,
@@ -1080,13 +1120,15 @@ export function createApi(s: Services, mcpCredential?: string) {
         c,
         undefined,
         false,
-        async (_, a) => {
+        async (d, a) => {
           requireValue(
             a.agent,
             403,
             "SCOPE_DENIED",
             "Use an agent credential.",
           );
+          if (a.agent.status === "active")
+            await audit(d, a, "agent.verify", a.agent.id);
           return {
             ...agentService.agentView(a.agent),
             websiteMarker: a.agent.website_marker,

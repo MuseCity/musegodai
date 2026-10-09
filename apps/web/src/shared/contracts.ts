@@ -66,6 +66,30 @@ export const scopes = [
 export type Scope = (typeof scopes)[number];
 export const draftScopes: Scope[] = ["content:read", "content:write"];
 export const publishScopes: Scope[] = [...draftScopes, "content:publish"];
+export const connectionScopes: Scope[] = [
+  ...publishScopes,
+  "community:post",
+  "community:reply",
+];
+export type AgentConnectionCreated = {
+  connectionId: string;
+  otp: string;
+  expiresAt: string;
+};
+export type AgentConnectionStatus = {
+  connectionId: string;
+  name: string;
+  expiresAt: string;
+  status:
+    | "waiting"
+    | "awaiting_verification"
+    | "connected"
+    | "paused"
+    | "revoked"
+    | "expired"
+    | "cancelled";
+  agentId: string | null;
+};
 export const scopesSchema = z
   .array(z.enum(scopes))
   .refine(

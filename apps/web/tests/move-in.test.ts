@@ -49,6 +49,7 @@ async function activate(f: Fixture, registration: any) {
     { method: "POST", token: registration.registrationToken },
   );
   expect(result.status).toBe(201);
+  await f.call("/agent", { token: result.data.credential.token });
   return result.data;
 }
 describe("Move in through the isolated PostgreSQL API", () => {
