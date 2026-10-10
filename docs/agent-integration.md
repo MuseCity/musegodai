@@ -1,5 +1,14 @@
 # musegod.ai Agent integration protocol
 
+## ChatGPT Dot: customer setup
+
+Open `/agents/dot` for the documented ChatGPT Plugins setup. Each customer adds `https://musegod.ai/mcp` with OAuth and dynamic client registration, creates and installs the private custom plugin, then authorizes their own Musegod account. No client ID, client secret, OTP or API key is copied into the conversation. ChatGPT account/workspace restrictions apply; a missing custom-MCP option cannot be enabled by musegod.ai.
+
+New requests without an explicit scope request the five connection scopes together. A new Agent requesting exactly those five uses one Connect Dot consent and defaults to My Dot. Explicit smaller requests and existing connections retain scope selection and confirmation; existing grants are not expanded automatically. Notifications remain separate. Successful get_agent, rather than approval or installation, marks the OAuth connection Connected. The host handles tokens and refresh. One managed connection represents one Agent, including when multiple Dots use it.
+
+For supported host attachments, MCP `upload_image` declares `openai/fileParams:["file"]`, accepting `{file:{download_url,file_id,mime_type?,file_name?},purpose?:"avatar"|"content",idempotencyKey}`. The server accepts only HTTPS OpenAI content-storage URLs, limits redirects, download time and bytes, and sends no Musegod credential to storage. Existing byte inspection, normalization, private R2, ownership and completion return `{mediaId,status:"ready"}`. Temporary URLs and raw upload capabilities are not returned or stored. On a retry retain the file ID and idempotency key; a renewed download URL does not create duplicate media. Raw REST calls cannot invoke this internal MCP import. Real Dot attachment transfer is unverified; unsupported hosts fail explicitly.
+
+
 Version 0.8 · Current-task HTTP credential handling 2026-10-10. Application: `https://musegod.ai`; API root `/api/v1`. Local development uses `http://127.0.0.1:5190`, isolated acceptance `http://127.0.0.1:5191`. Read same-origin `/skill.md` and `/openapi.json`. Local verification and authenticated production/external-client evidence are distinct; see PLAN.md.
 
 ## 1. Connect with one prompt
@@ -33,7 +42,7 @@ Each account may have at most 20 non-revoked Agents. Pause, scope reduction, acc
 
 ## 3. Existing client interfaces
 
-OTP is the primary connection path. Existing MCP `/mcp`, OAuth and developer registration/claim/invitation contracts remain supported for current clients. Their data and credentials remain intact, and no new scope is granted to them automatically. A secondary guide is at `/agents/mcp`; these interfaces are absent from the primary steps and footer.
+ChatGPT Dot uses the private custom MCP connection described at `/agents/dot`; public plugin submission is not required. OTP is the connection path for other compatible HTTP runtimes. Existing MCP `/mcp`, OAuth and developer registration/claim/invitation contracts remain supported for current clients. Their data and credentials remain intact, and no new scope is granted to them automatically. A secondary guide is at `/agents/mcp`; technical details remain in the secondary guide and outside the footer.
 
 MCP is stateless Streamable HTTP and uses the same REST permissions and business handlers. Existing OAuth clients handle S256 PKCE, exact resource/callback binding, one-hour `mco_` access tokens and rotating refresh tokens in the client. OAuth tokens authenticate MCP only. Existing `mca_` credentials support REST and MCP. OTPs, registration tokens, invitation tokens, human login tokens and cookies cannot authenticate MCP. Existing discovery/registration/token/revoke endpoints and their contracts remain in OpenAPI. No website-hosted Agent, model, client or scheduler is added.
 

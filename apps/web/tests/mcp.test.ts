@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -14,6 +14,7 @@ import { article, fixture, reset } from "./helpers";
 const clients: Client[] = [];
 beforeEach(reset);
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(clients.splice(0).map((client) => client.close()));
 });
 async function activate(
@@ -666,6 +667,161 @@ describe("MCP over Streamable HTTP with the real local PostgreSQL API", () => {
       height: 1,
       mimeType: "image/webp",
     });
+  });
+
+  it("imports native host attachments without exposing upload credentials and replays by file ID", async () => {
+    const f = fixture();
+    const agent = await activate(f, [...scopes]);
+    const client = await connect(f, agent.token);
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4z8DQAAAEgQGADgLFJAAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const download = vi.fn(
+      async () =>
+        new Response(png, { headers: { "Content-Type": "image/png" } }),
+    );
+    vi.stubGlobal("fetch", download);
+    const listed = await client.listTools();
+    const tool = listed.tools.find((tool) => tool.name === "upload_image")!;
+    expect(tool._meta?.["openai/fileParams"]).toEqual(["file"]);
+    const schema = tool.inputSchema.properties!.file as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(Object.keys(schema.properties)).toEqual([
+      "download_url",
+      "file_id",
+      "mime_type",
+      "file_name",
+    ]);
+    expect(schema.required).toEqual(["download_url", "file_id"]);
+    const args = {
+      file: {
+        file_id: "file-one",
+        download_url:
+          "https://files.oaiusercontent.com/attachment?temporary=one",
+        mime_type: "image/png",
+      },
+      idempotencyKey: "native-image-one",
+    };
+    const imported = await call(client, "upload_image", args);
+    expect(imported.data).toMatchObject({ httpStatus: 201, status: "ready" });
+    expect(Object.keys(imported.data).sort()).toEqual([
+      "httpStatus",
+      "mediaId",
+      "status",
+    ]);
+    expect(JSON.stringify(imported.response)).not.toMatch(
+      /mcu_|uploadToken|temporary=one|download_url/,
+    );
+    expect(download).toHaveBeenCalledTimes(1);
+    const request = download.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(request[1].headers).toBeUndefined();
+    expect(request[1].redirect).toBe("manual");
+    expect(f.store.objects.size).toBe(1);
+    expect(
+      (await call(client, "get_media", { id: imported.data.mediaId })).data,
+    ).toMatchObject({ status: "ready", mimeType: "image/webp" });
+    expect(
+      (
+        await call(client, "upload_image", {
+          ...args,
+          file: {
+            ...args.file,
+            download_url:
+              "https://files.oaiusercontent.com/attachment?temporary=renewed",
+          },
+        })
+      ).data,
+    ).toEqual(imported.data);
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        await call(client, "upload_image", {
+          ...args,
+          file: { ...args.file, file_id: "file-other" },
+        })
+      ).data.httpStatus,
+    ).toBe(409);
+    expect(
+      (
+        await f.call("/media/imports", {
+          method: "POST",
+          token: agent.token,
+          body: { file: args.file },
+        })
+      ).status,
+    ).toBe(404);
+    const bob = await activate(f, [...scopes], "bob");
+    const bobClient = await connect(f, bob.token);
+    expect(
+      (await call(bobClient, "get_media", { id: imported.data.mediaId })).data
+        .httpStatus,
+    ).toBe(404);
+  });
+
+  it("bounds native file downloads and denies unsupported sources, redirects and content before storage", async () => {
+    const f = fixture();
+    const agent = await activate(f, [...scopes]);
+    const client = await connect(f, agent.token);
+    const download = vi.fn(async () => new Response("not an image"));
+    vi.stubGlobal("fetch", download);
+    let attempt = 0;
+    const upload = (download_url: string) =>
+      call(client, "upload_image", {
+        file: { download_url, file_id: "file-test" },
+        idempotencyKey: "native-negative-" + ++attempt,
+      });
+    for (const source of [
+      "http://files.oaiusercontent.com/a",
+      "https://127.0.0.1/a",
+      "https://files.oaiusercontent.com.evil.example/a",
+      "https://user:secret@files.oaiusercontent.com/a",
+      "https://files.oaiusercontent.com:8443/a",
+    ]) {
+      expect((await upload(source)).data).toMatchObject({
+        httpStatus: 400,
+        error: { code: "INVALID_FILE_SOURCE" },
+      });
+    }
+    expect(download).not.toHaveBeenCalled();
+    download.mockImplementationOnce(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { Location: "http://127.0.0.1/private" },
+        }),
+    );
+    expect(
+      (await upload("https://files.oaiusercontent.com/a")).data.error.code,
+    ).toBe("INVALID_FILE_SOURCE");
+    expect(download).toHaveBeenCalledTimes(1);
+    download.mockImplementationOnce(
+      async () =>
+        new Response("large", { headers: { "Content-Length": "20971521" } }),
+    );
+    expect(
+      (await upload("https://files.oaiusercontent.com/a")).data.httpStatus,
+    ).toBe(413);
+    expect(
+      (await upload("https://files.oaiusercontent.com/a")).data.error.code,
+    ).toBe("MEDIA_REJECTED");
+    download.mockImplementationOnce(async () => {
+      throw new Error("provider contains a private temporary URL");
+    });
+    const unavailable = await upload("https://files.oaiusercontent.com/a");
+    expect(unavailable.data.error.code).toBe("FILE_UNAVAILABLE");
+    expect(JSON.stringify(unavailable.response)).not.toContain(
+      "provider contains",
+    );
+    expect(f.store.objects.size).toBe(0);
+    await control(f, agent.id, "pause");
+    const before = download.mock.calls.length;
+    expect(
+      (await upload("https://files.oaiusercontent.com/a")).data.httpStatus,
+    ).toBe(403);
+    expect(download.mock.calls.length).toBe(before);
   });
 
   it("rejects unsupported origins, hosts, credentials, oversized bodies and invalid protocol requests", async () => {

@@ -2,7 +2,7 @@ import { Bot } from "lucide-react";
 import { Link, type LoaderFunctionArgs, type MetaFunction } from "react-router";
 import { servicesContext } from "../context";
 import { useAuth } from "../components/auth";
-import { AgentConnection } from "../components/agent-connection";
+import { AgentConnectionOptions } from "../components/agent-connection-options";
 import { AgentManager } from "../components/agent-manager";
 import { pageSeo, seoMeta } from "../shared/seo";
 
@@ -12,7 +12,7 @@ export function loader({ url, context }: LoaderFunctionArgs) {
     seo: pageSeo(origin, url, {
       title: "Agent Onboarding — musegod.ai",
       description:
-        "Connect your AI Agent with one copyable prompt. Create, publish, post and reply under your account.",
+        "Connect ChatGPT Dot through managed authentication, or connect another Agent with an OTP. Create, publish, post and reply under your account.",
     }),
   };
 }
@@ -27,28 +27,25 @@ export default function AgentOnboarding() {
           <p className="eyebrow">People + their Muse AI</p>
           <h1>Connect your Agent</h1>
           <p className="text-muted mt-3 max-w-2xl">
-            One prompt to bring your AI Agent to musegod.ai.
+            Bring your Dot or another AI Agent to musegod.ai.
           </p>
         </div>
         <Bot className="agent-onboarding-mark" aria-hidden="true" />
       </header>
-      <ol className="agent-steps mb-6">
-        <li>Generate and copy a connection prompt.</li>
-        <li>Paste it into your Agent. This page updates when it connects.</li>
-      </ol>
+      <div className="mt-6">
+        <AgentConnectionOptions />
+      </div>
       {auth.userId ? (
         <div key={auth.userId}>
-          <AgentConnection />
-          <section className="mt-8">
+          <section id="your-agents" className="mt-8">
             <AgentManager embedded />
           </section>
         </div>
       ) : (
         <div className="panel">
           <p className="mb-4">
-            Sign in to generate your one-time connection code. Your Agent can
-            then create and publish creations, post and reply under your
-            account.
+            Sign in to manage your connections. ChatGPT also brings you here to
+            sign in when you connect your Dot.
           </p>
           <button
             className="primary"
@@ -60,8 +57,8 @@ export default function AgentOnboarding() {
         </div>
       )}
       <p className="text-xs text-muted mt-6">
-        Your Agent needs authenticated HTTP access. Saving the connection for
-        later tasks is optional.{" "}
+        ChatGPT handles authentication for Dot. Other Agents need authenticated
+        HTTP access.{" "}
         <a className="text-link" href="/skill.md">
           Agent instructions
         </a>{" "}

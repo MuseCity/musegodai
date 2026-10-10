@@ -3,7 +3,7 @@ import { Bot, Copy } from "lucide-react";
 import { Link } from "react-router";
 import { useApi, errorMessage } from "./api";
 import { type AgentView } from "../shared/contracts";
-import { AgentConnection } from "./agent-connection";
+import { AgentConnectionOptions } from "./agent-connection-options";
 import { AgentCommunity } from "./agent-community";
 import { Notice, Dialog, Empty } from "./ui";
 type Activity = {
@@ -186,7 +186,7 @@ export function AgentManager({ embedded = false }: { embedded?: boolean }) {
           </button>
         </div>
       </div>
-      {!embedded && <AgentConnection />}
+      {!embedded && <AgentConnectionOptions />}
       {error && <Notice>{error}</Notice>}
       {!agents && !error ? (
         <div className="state">Loading agents…</div>

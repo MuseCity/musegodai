@@ -9,7 +9,11 @@ import {
   type StoredOAuthClientInformation,
   type StoredOAuthTokens,
 } from "@modelcontextprotocol/client";
-import { draftScopes, type Scope } from "../src/shared/contracts";
+import {
+  draftScopes,
+  connectionScopes,
+  type Scope,
+} from "../src/shared/contracts";
 import { withDatabase } from "../src/server/database";
 import { assertLocalTarget } from "../scripts/local-target";
 import { article, config, fixture, reset } from "./helpers";
@@ -306,7 +310,7 @@ describe("OAuth MCP authorization with real local PostgreSQL", () => {
       "S256",
     );
     expect(authorizationUrl?.searchParams.get("scope")?.split(" ")).toEqual(
-      draftScopes,
+      connectionScopes,
     );
     const redirect = await raw(
       f,
@@ -321,7 +325,7 @@ describe("OAuth MCP authorization with real local PostgreSQL", () => {
       method: "POST",
       body: {
         name: "SDK-connected Agent",
-        approvedScopes: draftScopes,
+        approvedScopes: connectionScopes,
         confirmed: true,
       },
     });
@@ -345,7 +349,7 @@ describe("OAuth MCP authorization with real local PostgreSQL", () => {
     expect(identity.data).toMatchObject({
       httpStatus: 200,
       status: "active",
-      scopes: draftScopes,
+      scopes: connectionScopes,
     });
     const created = await tool(connected, "create_creation", {
       content: article,
@@ -441,7 +445,7 @@ describe("OAuth MCP authorization with real local PostgreSQL", () => {
     }
   });
 
-  it("requires human consent, defaults to private drafts and exposes no credentials in approval", async () => {
+  it("requests the complete connection once and exposes no credentials in approval", async () => {
     const f = fixture(),
       pending = await begin(f);
     const preview = await f.call(`/oauth/requests/${pending.requestId}`);
@@ -449,7 +453,7 @@ describe("OAuth MCP authorization with real local PostgreSQL", () => {
     expect(preview.data).toMatchObject({
       requestId: pending.requestId,
       redirectOrigin: "http://127.0.0.1:4179",
-      requestedScopes: draftScopes,
+      requestedScopes: connectionScopes,
       agent: null,
     });
     expect(preview.data.clientName).toEqual(expect.any(String));
@@ -467,7 +471,7 @@ describe("OAuth MCP authorization with real local PostgreSQL", () => {
       },
       {
         name: "OAuth assistant",
-        approvedScopes: [...draftScopes, "content:publish"],
+        approvedScopes: [...connectionScopes, "community:notifications"],
         confirmed: true,
       },
     ]) {

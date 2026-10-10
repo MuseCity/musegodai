@@ -4,9 +4,11 @@ import { RequireAuth } from "../components/auth";
 import { ClientError, errorMessage, useApi } from "../components/api";
 import { Notice } from "../components/ui";
 import { draftScopes, type Scope } from "../shared/contracts";
+import { fullConnectionScopes } from "../shared/dot-connection";
 
 type ConnectionRequest = {
   requestId: string;
+  owner: { name: string; handle: string };
   clientName: string;
   redirectOrigin: string;
   requestedScopes: Scope[];
@@ -103,10 +105,13 @@ function ConnectionConsent({ requestId }: { requestId: string }) {
       .then((result) => {
         if (current !== version.current) return;
         setRequest(result);
-        setName(result.agent?.name ?? "");
+        const complete =
+          !result.agent && fullConnectionScopes(result.requestedScopes);
+        setName(result.agent?.name ?? (complete ? "My Dot" : ""));
         setSelected(
           result.requestedScopes.filter(
             (scope) =>
+              complete ||
               draftScopes.includes(scope) ||
               !!result.agent?.scopes.includes(scope),
           ),
@@ -135,13 +140,17 @@ function ConnectionConsent({ requestId }: { requestId: string }) {
     );
     return () => window.clearTimeout(timer);
   }, [request]);
+  const complete =
+    !!request &&
+    !request.agent &&
+    fullConnectionScopes(request.requestedScopes);
 
   async function decide(approve: boolean) {
     if (
       !request ||
       expired ||
       submitting.current ||
-      (approve && (!confirmed || !name.trim()))
+      (approve && ((!complete && !confirmed) || !name.trim()))
     )
       return;
     const current = version.current;
@@ -179,7 +188,9 @@ function ConnectionConsent({ requestId }: { requestId: string }) {
 
   return (
     <div className="max-w-lg mx-auto pt-10">
-      <h1>Authorize your Agent connection</h1>
+      <h1>
+        {complete ? "Connect your Dot" : "Authorize your Agent connection"}
+      </h1>
       {!requestId ? (
         <p className="text-muted mt-4">
           Start the connection in your MCP client, then return here to review
@@ -204,6 +215,10 @@ function ConnectionConsent({ requestId }: { requestId: string }) {
         >
           <div className="panel">
             <h2>{request.clientName}</h2>
+            <p className="text-sm mt-3">
+              Connecting as <strong>{request.owner.name}</strong> (@
+              {request.owner.handle})
+            </p>
             <p className="text-sm text-muted mt-2">
               Client information is self-reported. Continue only if you started
               this connection and recognize the client.
@@ -235,59 +250,87 @@ function ConnectionConsent({ requestId }: { requestId: string }) {
               }}
             />
           </label>
-          <fieldset disabled={busy} className="space-y-4">
-            <legend className="font-semibold mb-3">Choose permissions</legend>
-            {request.requestedScopes.map((scope) => (
-              <label className="flex gap-3 items-start" key={scope}>
-                <input
-                  type="checkbox"
-                  checked={selected.includes(scope)}
-                  disabled={draftScopes.includes(scope)}
-                  onChange={(event) => {
-                    setSelected(
-                      event.target.checked
-                        ? [...selected, scope]
-                        : selected.filter((value) => value !== scope),
-                    );
-                    setConfirmed(false);
-                  }}
-                />
-                <span>
-                  <strong className="text-sm">
-                    {permissions[scope].label}
-                    {draftScopes.includes(scope) ? " · required" : ""}
-                  </strong>
-                  <span className="block text-xs text-muted mt-1">
-                    {permissions[scope].description}
+          {complete ? (
+            <div className="panel">
+              <h2>One connection, five permissions</h2>
+              <ul className="space-y-3 mt-4">
+                {request.requestedScopes.map((scope) => (
+                  <li key={scope}>
+                    <strong className="text-sm">
+                      {permissions[scope].label}
+                    </strong>
+                    <p className="text-xs text-muted mt-1">
+                      {permissions[scope].description}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-muted mt-4">
+                Connect Dot authorizes these actions under your account.
+                Publishing, posts and replies need no additional website
+                approval. Notification access is separate.
+              </p>
+            </div>
+          ) : (
+            <fieldset disabled={busy} className="space-y-4">
+              <legend className="font-semibold mb-3">Choose permissions</legend>
+              {request.requestedScopes.map((scope) => (
+                <label className="flex gap-3 items-start" key={scope}>
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(scope)}
+                    disabled={draftScopes.includes(scope)}
+                    onChange={(event) => {
+                      setSelected(
+                        event.target.checked
+                          ? [...selected, scope]
+                          : selected.filter((value) => value !== scope),
+                      );
+                      setConfirmed(false);
+                    }}
+                  />
+                  <span>
+                    <strong className="text-sm">
+                      {permissions[scope].label}
+                      {draftScopes.includes(scope) ? " · required" : ""}
+                    </strong>
+                    <span className="block text-xs text-muted mt-1">
+                      {permissions[scope].description}
+                    </span>
                   </span>
-                </span>
-              </label>
-            ))}
-          </fieldset>
+                </label>
+              ))}
+            </fieldset>
+          )}
           <p className="text-xs text-muted">
-            New public-action and notification permissions start off. Your
-            account, wallet and Agent management stay with you. Credentials go
-            directly to your client and are never shown in this page or copied
-            into the conversation.
+            Your account, wallet and Agent management stay with you. Credentials
+            go directly to your client and are never shown in this page or
+            copied into the conversation.
           </p>
-          <label className="flex gap-3 items-start text-sm">
-            <input
-              type="checkbox"
-              checked={confirmed}
-              disabled={busy}
-              onChange={(event) => setConfirmed(event.target.checked)}
-            />
-            <span>
-              I recognize this client and authorize this Agent to use the
-              selected permissions under my account.
-            </span>
-          </label>
+          {!complete && (
+            <label className="flex gap-3 items-start text-sm">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                disabled={busy}
+                onChange={(event) => setConfirmed(event.target.checked)}
+              />
+              <span>
+                I recognize this client and authorize this Agent to use the
+                selected permissions under my account.
+              </span>
+            </label>
+          )}
           <div className="flex flex-wrap gap-3">
             <button
               className="primary"
-              disabled={busy || !confirmed || !name.trim()}
+              disabled={busy || (!complete && !confirmed) || !name.trim()}
             >
-              {busy ? "Returning to your client…" : "Authorize connection"}
+              {busy
+                ? "Returning to your client…"
+                : complete
+                  ? "Connect Dot"
+                  : "Authorize connection"}
             </button>
             <button
               type="button"

@@ -29,6 +29,7 @@ export default [
   route("me/content", "routes/my-content.tsx"),
   route("me/agents", "routes/agents.tsx"),
   route("agents", "routes/agent-onboarding.tsx"),
+  route("agents/dot", "routes/dot-guide.tsx"),
   route("agents/claim", "routes/claim.tsx"),
   route("agents/connect", "routes/agent-connect.tsx"),
   route("agents/mcp", "routes/mcp-guide.tsx"),

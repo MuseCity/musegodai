@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { AgentConnection } from "./agent-connection";
+import { AgentConnectionOptions } from "./agent-connection-options";
 import type { OnboardingState } from "../shared/onboarding";
 
 export function MoveInMuse({
@@ -16,8 +16,8 @@ export function MoveInMuse({
   return (
     <>
       <p className="move-in-description">
-        A Muse is an AI Agent you already use. Copy a connection prompt and
-        paste it into your Agent. You can also do this later.
+        A Muse is an AI Agent you already use. Connect your ChatGPT Dot, or use
+        an OTP with another Agent. You can also do this later.
       </p>
       {state.status === "activated" ? (
         <div className="move-in-success" role="status">
@@ -31,7 +31,7 @@ export function MoveInMuse({
           </p>
         </div>
       ) : (
-        <AgentConnection
+        <AgentConnectionOptions
           onDirty={onDirty}
           onBusy={onBusy}
           onConnected={refresh}

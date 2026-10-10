@@ -456,6 +456,76 @@ try {
   checks.push(
     "owner revocation removes both MCP and refresh access without exposing a new key",
   );
+  const dotClient = await request("/oauth/register", {
+    method: "POST",
+    status: 201,
+    body: {
+      client_name: "Local Dot host",
+      redirect_uris: [callbackUrl],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+    },
+  });
+  const five = [
+    ...scopes,
+    "content:publish",
+    "community:post",
+    "community:reply",
+  ];
+  const dotPending = await begin(dotClient.data.client_id, five);
+  browser("open", origin + dotPending.path);
+  wait(
+    "!![...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Connect Dot' && !b.disabled)",
+  );
+  assert.equal(
+    evaluate("document.querySelectorAll('main input[type=checkbox]').length"),
+    0,
+  );
+  assert.equal(
+    evaluate("document.querySelector('main input').value"),
+    "My Dot",
+  );
+  assert.ok(
+    evaluate(
+      "document.querySelector('main').innerText.includes('Connecting as')",
+    ),
+  );
+  for (const width of [1440, 390, 320]) {
+    browser("set", "viewport", String(width), "900");
+    assert.ok(
+      evaluate("document.documentElement.scrollWidth <= innerWidth"),
+      "Dot consent width " + width,
+    );
+  }
+  // Supply a unique test-owned name; the default is asserted above.
+  browser("find", "label", "Agent name", "fill", name + " Dot");
+  click("Connect Dot");
+  const dotCode = await received(dotPending);
+  const dotTokens = await exchange(
+    dotClient.data.client_id,
+    dotPending,
+    dotCode,
+  );
+  assert.deepEqual(dotTokens.scope.split(" "), five);
+  const dotAgent = (await api("/me/agents")).find(
+    (a) => a.name === name + " Dot",
+  );
+  createdAgents.push(dotAgent.id);
+  assert.equal(dotAgent.oauthConnection.status, "authorized");
+  const dot = await connect(dotTokens.access_token);
+  assert.equal(
+    (await api("/me/agents/" + dotAgent.id)).oauthConnection.status,
+    "authorized",
+  );
+  assert.equal((await tool(dot, "get_agent")).status, "active");
+  assert.equal(
+    (await api("/me/agents/" + dotAgent.id)).oauthConnection.status,
+    "connected",
+  );
+  checks.push(
+    "complete five-scope consent has a default name and one confirmation; discovery stays Authorized until get_agent succeeds",
+  );
   assert.deepEqual(browser("errors").errors ?? [], []);
   writeFileSync(
     output + "/verification.json",

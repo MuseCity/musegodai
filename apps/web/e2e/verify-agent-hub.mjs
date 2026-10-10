@@ -40,6 +40,9 @@ function wait(condition) {
 function click(label, scope = "document") {
   if (label.startsWith("Generate and copy")) {
     evaluate(
+      "document.querySelector('.agent-connection').closest('details').open=true",
+    );
+    evaluate(
       "document.querySelector('.agent-connection button.primary').scrollIntoView({block:'center'})",
     );
     browser("click", ".agent-connection button.primary");
@@ -99,7 +102,8 @@ try {
   const html = await (await fetch(origin + "/agents")).text();
   for (const text of [
     "Connect your Agent",
-    "Generate and copy a connection prompt",
+    "Connect ChatGPT Dot",
+    "Other Agents · connect with an OTP",
     "Sign in to connect your Agent",
   ])
     assert.ok(html.includes(text));
@@ -116,7 +120,72 @@ try {
     ),
   );
   checks.push(
-    "anonymous SSR and two-step OTP guide without MCP/OAuth primary controls",
+    "anonymous SSR recommends the Dot custom connection and keeps OTP under Other Agents",
+  );
+  browser("open", origin + "/agents/dot");
+  wait("!!document.querySelector('textarea')");
+  wait(
+    "!![...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Join' && !b.disabled)",
+  );
+  assert.equal(
+    evaluate("document.querySelector('main a.primary').href"),
+    "https://chatgpt.com/plugins",
+  );
+  assert.equal(
+    evaluate("document.querySelector('textarea').value"),
+    origin + "/mcp",
+  );
+  assert.ok(
+    !evaluate(
+      "/mca_|mco_|mcr_/.test(document.querySelector('main').innerText)",
+    ),
+  );
+  evaluate(
+    "document.querySelector('main section.panel:nth-of-type(1) button.secondary').scrollIntoView({block:'center'})",
+  );
+  browser(
+    "find",
+    "role",
+    "button",
+    "click",
+    "--name",
+    "Copy server url",
+    "--exact",
+  );
+  wait(
+    "[...document.querySelectorAll('[role=status]')].some(p=>p.textContent==='Copied.' || p.textContent.includes('copy it manually'))",
+  );
+  evaluate(
+    "Object.defineProperty(navigator.clipboard,'writeText',{configurable:true,value:()=>Promise.reject(Error('fixture clipboard denied'))})",
+  );
+  evaluate(
+    "document.querySelector('main section.panel:nth-of-type(3) button.secondary').scrollIntoView({block:'center'})",
+  );
+  browser(
+    "find",
+    "role",
+    "button",
+    "click",
+    "--name",
+    "Copy verification instruction",
+    "--exact",
+  );
+  wait(
+    "document.body.innerText.includes('Select the text above and copy it manually.')",
+  );
+  for (const width of [1440, 390, 320]) {
+    browser("set", "viewport", String(width), "900");
+    assert.ok(
+      evaluate("document.documentElement.scrollWidth <= innerWidth"),
+      "Dot guide width " + width,
+    );
+  }
+  checks.push(
+    "Dot guide opens the documented native Plugins page, copies only the public server URL and offers manual copy on clipboard denial; responsive without credentials",
+  );
+  browser("open", origin + "/agents");
+  wait(
+    "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Sign in to connect your Agent' && !b.disabled)",
   );
   for (const width of [1440, 768, 390, 320]) {
     browser("set", "viewport", String(width), "900");
@@ -326,6 +395,10 @@ try {
   );
   connections.push(lost.connectionId);
   browser("open", origin + "/agents");
+  wait("!!document.querySelector('.agent-connection')");
+  evaluate(
+    "document.querySelector('.agent-connection').closest('details').open=true",
+  );
   wait(
     "document.querySelector('.agent-connection').innerText.includes('Generate a new prompt if you no longer have it')",
   );

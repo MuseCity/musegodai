@@ -2,6 +2,7 @@ import { z } from "zod";
 import { buildOAuthProtectedResourceMetadata } from "@modelcontextprotocol/server";
 import {
   draftScopes,
+  connectionScopes,
   scopesSchema,
   scopes as supportedScopes,
   type Scope,
@@ -29,7 +30,7 @@ export const resource = (origin: string) => origin + "/mcp";
 export const challenge = (
   origin: string,
   error?: string,
-  scopes = draftScopes,
+  scopes = connectionScopes,
 ) =>
   `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="${scopes.join(" ")}"${error ? `, error="${error}", error_description="Reconnect musegod.ai with the required permissions"` : ""}`;
 export function authorizationMetadata(origin: string) {
@@ -203,7 +204,7 @@ export async function begin(
     "invalid_request",
     "S256 PKCE is required.",
   );
-  const requested = scopes(p.scope);
+  const requested = scopes(p.scope, connectionScopes);
   const requestId = id("oauth");
   await db.query(
     "INSERT INTO musecity.oauth_requests(id,client_id,redirect_uri,state,resource,code_challenge,requested_scopes,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
@@ -257,6 +258,7 @@ export async function preview(db: Database, a: Actor, requestId: string) {
   );
   return {
     requestId,
+    owner: { name: a.account.name, handle: a.account.handle },
     clientName: client.name,
     redirectOrigin: new URL(request.redirect_uri).origin,
     requestedScopes: request.requested_scopes,

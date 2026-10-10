@@ -89,6 +89,7 @@ import type { AccountRow, AgentRow } from "./schema";
 import { openapi, skill } from "./discovery";
 import { handleMcp } from "./mcp";
 import * as oauth from "./oauth";
+import { chatgptFile, importChatgptImage } from "./chatgpt-media";
 export type Services = {
   connectionString: string;
   store: ObjectStore;
@@ -426,7 +427,7 @@ export function createApi(s: Services, mcpCredential?: string) {
   });
   app.all("/mcp", async (c) => {
     const token = c.req.header("authorization")?.replace(/^Bearer /, "");
-    const dispatch = token?.startsWith("mco_") ? createApi(s, token) : app;
+    const dispatch = token ? createApi(s, token) : app;
     const response = await handleMcp(
       c.req.raw,
       s.origin,
@@ -791,6 +792,35 @@ export function createApi(s: Services, mcpCredential?: string) {
       ),
     ),
   );
+  // Only the authenticated MCP dispatch closure exposes native attachment import.
+  app.post("/api/v1/media/imports", async (c) => {
+    requireValue(
+      mcpCredential,
+      404,
+      "NOT_FOUND",
+      "This operation is available through the connected plugin.",
+    );
+    const body = await json(
+      c,
+      z
+        .object({
+          file: chatgptFile,
+          purpose: z.enum(["avatar", "content"]).default("content"),
+        })
+        .strict(),
+    );
+    return c.json(
+      await write(
+        c,
+        "content:write",
+        false,
+        { fileId: body.file.file_id, purpose: body.purpose },
+        (d, a) =>
+          importChatgptImage(d, a, s.store, s.images, body.file, body.purpose),
+      ),
+      201,
+    );
+  });
   app.post("/api/v1/media/uploads", async (c) => {
     const body = await json(
       c,
