@@ -95,6 +95,7 @@ import { robinhoodMuseChain, type MuseChain } from "./muse-chain";
 import * as muses from "./muses";
 import { museReportSchema, museSignatureSchema } from "../shared/muses";
 import { agentMuse, reportMuseStep, requireMuseAgent } from "./muse-agent";
+import { museStartDoc } from "./muse-skill";
 import {
   authorizeSignature,
   relayPending,
@@ -360,6 +361,19 @@ export function createApi(s: Services, mcpCredential?: string) {
     return c.body(await db((d) => sitemap(d, s.origin, c.req.param("part"))));
   });
   app.get("/skill.md", (c) => c.text(skill(s.origin)));
+  app.get("/muses/:id/start.md", async (c) => {
+    c.header("X-Robots-Tag", "noindex");
+    const tokenId = museId(c.req.param("id"));
+    requireValue(
+      s.musegod,
+      503,
+      "MUSES_UNAVAILABLE",
+      "Muse setup is unavailable right now.",
+    );
+    const { value } = await s.musegod.muse(tokenId);
+    c.header("Content-Type", "text/markdown; charset=utf-8");
+    return c.body(museStartDoc(s.origin, value));
+  });
   app.get("/openapi.json", (c) => c.json(openapi(s.origin)));
   app.get("/.well-known/oauth-authorization-server", (c) =>
     c.json(oauth.authorizationMetadata(s.origin)),
