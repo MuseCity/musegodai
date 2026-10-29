@@ -122,6 +122,45 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
     expect(created.data.expiresAt).toEqual(expect.any(String));
   });
 
+  it("exposes the owner handle only with a publicly listed bound Agent", async () => {
+    const f = withMuses(fixture());
+    const active = await connected(f);
+    expect((await f.call("/muses/1", { token: null })).data.agent).toBeNull();
+    const owner = await f.call("/me", {
+      method: "PATCH",
+      body: { name: "Alice", bio: "Keeper", avatarMediaId: null, join: true },
+    });
+    const post = await f.call("/posts", {
+      method: "POST",
+      token: active.data.credential.token,
+      body: { kind: "update", text: "Public hello from Bard." },
+    });
+    expect(post.status).toBe(201);
+    const view = await f.call("/muses/1", { token: null });
+    expect(view.data.agent).toEqual({
+      id: active.data.agentId,
+      name: "Bard",
+      ownerHandle: owner.data.handle,
+    });
+    const feed = await f.call(
+      `/feed?owner=${owner.data.handle}&agent=${active.data.agentId}&kind=update`,
+      { token: null },
+    );
+    expect(feed.status).toBe(200);
+    expect(feed.data.items.map((item: any) => item.id)).toContain(post.data.id);
+    for (const update of [
+      "public_visible=false",
+      "public_visible=true,status='revoked'",
+    ]) {
+      await withDatabase(config.testAdminUrl, (d) =>
+        d.query(`UPDATE musecity.agents SET ${update} WHERE id=$1`, [
+          active.data.agentId,
+        ]),
+      );
+      expect((await f.call("/muses/1", { token: null })).data.agent).toBeNull();
+    }
+  });
+
   it("keeper via external linked wallet", async () => {
     const f = withMuses(fixture());
     f.setOwner(1, addresses.external);

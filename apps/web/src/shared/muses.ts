@@ -171,7 +171,7 @@ export type MuseSummary = {
 export type MuseView = {
   muse: MuseSummary;
   keeper: string;
-  agent: { id: string; name: string } | null;
+  agent: { id: string; name: string; ownerHandle: string } | null;
   startedAt: string | null;
   steps: MuseStep[];
   progress: { done: number; total: 10 };

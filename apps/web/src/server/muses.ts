@@ -211,7 +211,7 @@ async function localFacts(db: Database, binding: MuseBindingRow | undefined) {
       agent.status !== "revoked" &&
       account?.status === "active" &&
       account.joined_at
-        ? { id: agent.id, name: agent.name }
+        ? { id: agent.id, name: agent.name, ownerHandle: account.handle }
         : null,
     facts: {
       reports: reported,

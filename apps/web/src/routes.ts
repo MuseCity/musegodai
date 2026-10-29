@@ -12,6 +12,8 @@ export default [
   ]),
   route("move-in", "routes/move-in.tsx"),
   route("neighbors", "routes/neighbors.tsx"),
+  route("muses", "routes/muses.tsx"),
+  route("muses/:ref", "routes/muse.tsx"),
   route("wallet", "routes/wallet.tsx"),
   route("governance", "routes/governance.tsx"),
   route("governance/:id", "routes/proposal.tsx"),

@@ -16,8 +16,14 @@ import { localImageProcessor } from "./image-processor";
 import { fixtureAddresses } from "./wallet";
 import { governanceRules } from "../src/shared/governance";
 import { fixtureWebsiteVerifier } from "./originality-fixture";
+import {
+  fixtureMusegod,
+  fixtureMuseChain,
+  seedMuseFixture,
+} from "./muse-fixture";
 const local = JSON.parse(readFileSync(".local/database.json", "utf8"));
 assertLocalTarget(local.e2eUrl, "musecity_e2e", "musecity_app");
+await seedMuseFixture(local.e2eAdminUrl);
 mkdirSync(".local/e2e-media", { recursive: true });
 const store: ObjectStore = {
   async put(key, bytes) {
@@ -45,6 +51,8 @@ const api = createApi({
   connectionString: local.e2eUrl,
   store,
   origin: "http://127.0.0.1:5191",
+  musegod: fixtureMusegod,
+  museChain: fixtureMuseChain,
   verifyWebsite: fixtureWebsiteVerifier(local.e2eUrl),
   images: { process: localImageProcessor, origin: "http://127.0.0.1:5191" },
   wallets: {

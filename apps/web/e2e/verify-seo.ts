@@ -261,7 +261,22 @@ async function mediaStatus(id: string, status: number) {
     "media visibility " + status,
   );
 }
-const sitemap = async () => (await fetch(origin + "/sitemap.xml")).text();
+async function sitemap() {
+  const response = await fetch(origin + "/sitemap.xml");
+  check(response.ok, "sitemap root accessible");
+  const root = await response.text();
+  if (!root.includes("<sitemapindex")) return root;
+  return (
+    await Promise.all(
+      locs(root).map(async (url) => {
+        check(new URL(url).origin === origin, "local sitemap shard");
+        const shard = await fetch(url);
+        check(shard.ok, "sitemap shard accessible " + url);
+        return shard.text();
+      }),
+    )
+  ).join("");
+}
 await html(path, 404);
 await mediaStatus(cover, 404);
 check(!(await sitemap()).includes(path), "draft not in sitemap");
@@ -285,7 +300,7 @@ const edited = await call(
 );
 const publicPage = await html(path);
 check(
-  publicPage.raw.includes("<title>SEO public version — musecity</title>") &&
+  publicPage.raw.includes("<title>SEO public version — musegod.ai</title>") &&
     !publicPage.raw.includes("SEO private draft"),
   "HTML retains published revision",
 );

@@ -91,6 +91,9 @@ function Directory() {
         >
           Agents
         </ContentFilterLink>
+        <Link className="chip" to="/muses">
+          Muses
+        </Link>
       </nav>
       <ContentSearch
         label={agents ? "Search public agents" : "Search neighbors"}

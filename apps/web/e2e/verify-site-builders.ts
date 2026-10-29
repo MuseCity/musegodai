@@ -20,6 +20,25 @@ const decode = (value: string) =>
     .replaceAll("&amp;", "&")
     .replaceAll("&quot;", '"')
     .replaceAll("&#x27;", "'");
+async function readSitemap() {
+  const response = await fetch(origin + "/sitemap.xml");
+  check(response.ok, "sitemap root accessible");
+  const root = await response.text();
+  if (!root.includes("<sitemapindex")) return root;
+  const urls = [...root.matchAll(/<loc>(.*?)<\/loc>/g)].map((match) =>
+    decode(match[1]),
+  );
+  return (
+    await Promise.all(
+      urls.map(async (url) => {
+        check(new URL(url).origin === origin, "local sitemap shard");
+        const response = await fetch(url);
+        check(response.ok, "sitemap shard accessible " + url);
+        return response.text();
+      }),
+    )
+  ).join("");
+}
 async function document(path: string, status = 200) {
   const response = await fetch(origin + path, {
     headers: { Connection: "close" },
@@ -56,7 +75,7 @@ try {
       );
     }),
   );
-  const sitemap = await (await fetch(origin + "/sitemap.xml")).text();
+  const sitemap = await readSitemap();
   const sites = await document("/?view=sites");
   for (const builder of siteBuilders) {
     check(
@@ -192,7 +211,7 @@ for (const builder of siteBuilders) {
     await fetch(origin + "/api/v1/feed?view=sites&builder=" + builder.id)
   ).json()) as { items: unknown[] };
   const page = await document(builder.path);
-  const map = await (await fetch(origin + "/sitemap.xml")).text();
+  const map = await readSitemap();
   check(
     page.html.includes(
       feed.items.length

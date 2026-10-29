@@ -1,5 +1,301 @@
 @import "tailwindcss";
 
+.muse-page,
+.muse-directory {
+  max-width: 1120px;
+  margin-inline: auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.muse-crumb {
+  margin-bottom: 24px;
+  font-size: 13px;
+  color: var(--color-muted);
+}
+.muse-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  align-items: center;
+  gap: 32px;
+}
+.muse-art {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 24px;
+  background: var(--color-line);
+}
+.muse-identity h1 {
+  font-size: clamp(32px, 5vw, 52px);
+  margin-top: 8px;
+}
+.muse-quote {
+  margin: 14px 0;
+  font-size: 19px;
+  line-height: 1.5;
+}
+.muse-traits,
+.muse-keeper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+.muse-traits .chip {
+  font-size: 12px;
+}
+.muse-keeper {
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--color-muted);
+}
+.muse-progress {
+  margin-top: 24px;
+}
+.muse-progress > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+.muse-bar {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  background: var(--color-canvas);
+}
+.muse-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-brand);
+  border-radius: inherit;
+}
+.muse-started {
+  margin-top: 12px;
+}
+.muse-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+  gap: 20px;
+  align-items: start;
+  margin-top: 26px;
+}
+.muse-panel {
+  padding: 24px;
+  border: 1px solid var(--color-line);
+  border-radius: 20px;
+  background: var(--color-surface);
+  min-width: 0;
+}
+.muse-panel h2 {
+  margin-bottom: 8px;
+}
+.muse-note,
+.muse-safety {
+  color: var(--color-muted);
+  font-size: 14px;
+}
+.muse-sidebar {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.muse-sidebar .primary {
+  margin-top: 16px;
+}
+.muse-posts .community-card {
+  margin-top: 16px;
+}
+.muse-step-group {
+  margin-top: 20px;
+}
+.muse-step-group h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted);
+  margin-bottom: 6px;
+}
+.muse-step-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.muse-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 4px 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--color-line);
+}
+.muse-step-icon {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--color-line);
+  border-radius: 50%;
+  font-size: 13px;
+}
+.muse-step[data-status="done"] .muse-step-icon {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: var(--color-surface);
+}
+.muse-step[data-status="half"] .muse-step-icon {
+  border-color: var(--color-leaf);
+  border-style: dashed;
+  color: var(--color-leaf);
+}
+.muse-step-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 14px;
+}
+.muse-status {
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--color-muted);
+  background: var(--color-canvas);
+}
+.muse-step[data-status="done"] .muse-status {
+  color: var(--color-brand);
+  background: var(--color-sky);
+}
+.muse-step[data-status="half"] .muse-status {
+  color: var(--color-leaf);
+  background: var(--color-mint);
+}
+.muse-step-meta {
+  grid-column: 2;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.muse-reported {
+  color: var(--color-muted);
+}
+.muse-reported[data-status="done"] .muse-step-icon {
+  border-color: var(--color-muted);
+  background: var(--color-muted);
+}
+.muse-reported[data-status="done"] .muse-status {
+  color: var(--color-muted);
+  background: var(--color-canvas);
+}
+.muse-safety {
+  margin-top: 24px;
+  font-size: 12px;
+}
+.muse-directory > h1 {
+  margin: 8px 0;
+}
+.muse-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: 580px;
+  margin: 20px 0;
+}
+.muse-search input:not([type="hidden"]) {
+  flex: 1 1 180px;
+  width: auto;
+  min-width: 0;
+}
+.muse-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.muse-stats > div {
+  padding: 16px;
+  border: 1px solid var(--color-line);
+  border-radius: 16px;
+  background: var(--color-surface);
+}
+.muse-stats b {
+  display: block;
+  font-size: 28px;
+}
+.muse-stats span {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.muse-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr));
+  gap: 12px;
+}
+.muse-card {
+  border: 1px solid var(--color-line);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--color-surface);
+  min-width: 0;
+}
+.muse-card:hover {
+  border-color: var(--color-brand);
+}
+.muse-card > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
+  background: var(--color-line);
+}
+.muse-card > div {
+  padding: 10px 12px;
+  font-size: 14px;
+}
+.muse-card small {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.muse-card .muse-bar {
+  height: 6px;
+  margin: 8px 0 4px;
+}
+@media (max-width: 979px) {
+  .muse-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 680px) {
+  .muse-hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .muse-art {
+    max-width: 375px;
+    justify-self: center;
+  }
+  .muse-panel {
+    padding: 18px;
+  }
+  .muse-stats {
+    gap: 8px;
+  }
+  .muse-stats > div {
+    padding: 10px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .muse-page *,
+  .muse-directory * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 .governance-layout {
   max-width: 960px;
   margin: 0 auto;
