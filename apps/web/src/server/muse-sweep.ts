@@ -1,10 +1,31 @@
 import { withDatabase } from "./database";
 import { endIfTransferred, type MuseDeps } from "./muses";
+import { rpcCauses } from "./rpc";
 import type { MuseBindingRow } from "./schema";
 
 export const sweepChunk = 10_000n,
   sweepMaxChunks = 12,
   sweepSafety = 64n;
+
+class SweepFailure extends Error {
+  constructor(
+    readonly reason: "rpc" | "musegod_stale",
+    cause?: unknown,
+  ) {
+    super("Muse sweep failed.", { cause });
+  }
+}
+
+async function sweepRead<T>(
+  reason: SweepFailure["reason"],
+  read: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await read();
+  } catch (error) {
+    throw new SweepFailure(reason, error);
+  }
+}
 
 export async function sweepMuseTransfers(
   connectionString: string,
@@ -15,32 +36,53 @@ export async function sweepMuseTransfers(
   to: string | null;
   ended: number;
 }> {
-  return withDatabase(connectionString, async (db) => {
-    const result = {
-      skipped: false,
-      from: null as string | null,
-      to: null as string | null,
-      ended: 0,
-    };
-    const lock = await db.one<{ locked: boolean }>(
-      "SELECT pg_try_advisory_lock(624139189) AS locked",
-    );
-    if (!lock?.locked) return { ...result, skipped: true };
-    try {
-      const head = (await deps.chain.headBlock()) - sweepSafety;
-      if (head < 0n) return result;
-      const state = await db.one<{ last_block: string }>(
-        "SELECT last_block FROM musecity.muse_sweep WHERE id='transfers'",
-      );
+  const result = {
+    skipped: false,
+    from: null as string | null,
+    to: null as string | null,
+    ended: 0,
+  };
+  try {
+    await withDatabase(connectionString, async (db) => {
+      const head =
+        (await sweepRead("rpc", () => deps.chain.headBlock())) - sweepSafety;
+      if (head < 0n) return;
+      const checkedDeps: MuseDeps = {
+        ...deps,
+        chain: {
+          ...deps.chain,
+          ownerOf: (tokenId) =>
+            sweepRead("rpc", () => deps.chain.ownerOf(tokenId)),
+        },
+        wallets: {
+          ...deps.wallets,
+          linkedAddresses: async (userId) => {
+            try {
+              return await deps.wallets.linkedAddresses(userId);
+            } catch {
+              // This external ownership dependency is not a database failure;
+              // only chain RPC errors may contribute RPC status/code fields.
+              throw new SweepFailure("rpc");
+            }
+          },
+        },
+      };
       const check = async (bindings: MuseBindingRow[]) => {
         let ended = 0;
         for (const binding of bindings) {
-          const record = await deps.musegod.muse(binding.token_id);
+          const record = await sweepRead("musegod_stale", () =>
+            deps.musegod.muse(binding.token_id),
+          );
           // A stale cache means the upstream check failed. Retry this range
           // later rather than checkpointing an incomplete ownership check.
-          if (record.stale) throw new Error("Muse snapshot is stale.");
+          if (record.stale) throw new SweepFailure("musegod_stale");
           if (
-            await endIfTransferred(db, deps, binding, record.value.agent.wallet)
+            await endIfTransferred(
+              db,
+              checkedDeps,
+              binding,
+              record.value.agent.wallet,
+            )
           )
             ended++;
         }
@@ -51,44 +93,66 @@ export async function sweepMuseTransfers(
           "INSERT INTO musecity.muse_sweep(id,last_block) VALUES('transfers',$1) ON CONFLICT(id) DO UPDATE SET last_block=EXCLUDED.last_block,updated_at=now()",
           [block.toString()],
         );
-      if (!state) {
-        result.ended = await db.transaction(async () => {
-          const bindings = await db.query<MuseBindingRow>(
-            "SELECT * FROM musecity.muse_bindings WHERE ended_at IS NULL ORDER BY token_id",
+      for (let i = 0; i < sweepMaxChunks; i++) {
+        const chunk = await db.transaction(async () => {
+          const lock = await db.one<{ locked: boolean }>(
+            "SELECT pg_try_advisory_xact_lock(624139189) AS locked",
           );
-          const ended = await check(bindings);
-          await save(head);
-          return ended;
-        });
-        result.to = head.toString();
-        return result;
-      }
-      let last = BigInt(state.last_block);
-      for (let i = 0; i < sweepMaxChunks && last < head; i++) {
-        const from = last + 1n,
-          to = last + sweepChunk < head ? last + sweepChunk : head;
-        const ended = await db.transaction(async () => {
-          const tokens = await deps.chain.transferredTokens(from, to);
+          if (!lock?.locked) return { skipped: true };
+          // Re-read after locking every chunk: another run may have advanced
+          // the shared checkpoint since this run's previous commit.
+          const state = await db.one<{ last_block: string }>(
+            "SELECT last_block FROM musecity.muse_sweep WHERE id='transfers' FOR UPDATE",
+          );
+          if (!state) {
+            const bindings = await db.query<MuseBindingRow>(
+              "SELECT * FROM musecity.muse_bindings WHERE ended_at IS NULL ORDER BY token_id",
+            );
+            const ended = await check(bindings);
+            await save(head);
+            return { from: null, to: head, ended, complete: true };
+          }
+          const last = BigInt(state.last_block);
+          if (last >= head) return null;
+          const from = last + 1n,
+            to = last + sweepChunk < head ? last + sweepChunk : head;
+          const tokens = await sweepRead("rpc", () =>
+            deps.chain.transferredTokens(from, to),
+          );
           const bindings = await db.query<MuseBindingRow>(
             "SELECT * FROM musecity.muse_bindings WHERE ended_at IS NULL AND token_id=ANY($1::integer[]) ORDER BY token_id",
             [tokens],
           );
           const ended = await check(bindings);
           await save(to);
-          return ended;
+          return { from, to, ended, complete: to === head };
         });
-        result.from ??= from.toString();
-        result.to = to.toString();
-        result.ended += ended;
-        last = to;
+        if (!chunk) break;
+        if ("skipped" in chunk) {
+          result.skipped = true;
+          break;
+        }
+        result.from ??= chunk.from?.toString() ?? null;
+        result.to = chunk.to.toString();
+        result.ended += chunk.ended;
+        if (chunk.complete) break;
       }
-    } catch {
-      // RPC exceptions can carry a configured URL with an API key. Never log
-      // their message, stack or cause; committed chunks remain resumable.
-      console.error(JSON.stringify({ event: "muse.sweep.failed" }));
-    } finally {
-      await db.query("SELECT pg_advisory_unlock(624139189)");
-    }
-    return result;
-  });
+    });
+  } catch (error) {
+    const reason = error instanceof SweepFailure ? error.reason : "database";
+    const causes =
+      error instanceof SweepFailure && reason === "rpc"
+        ? rpcCauses(error.cause)
+        : [];
+    // Never log provider/database messages, URLs, stacks or raw causes.
+    console.error(
+      JSON.stringify({
+        event: "muse.sweep.failed",
+        reason,
+        status: causes.find((cause) => cause.status !== undefined)?.status,
+        code: causes.find((cause) => cause.code !== undefined)?.code,
+      }),
+    );
+  }
+  return result;
 }

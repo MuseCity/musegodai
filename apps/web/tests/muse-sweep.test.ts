@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { withDatabase } from "../src/server/database";
+import pg from "pg";
+import { Database, withDatabase } from "../src/server/database";
 import {
   sweepMuseTransfers,
   sweepChunk,
@@ -173,15 +174,27 @@ describe("scheduled muse Transfer sweep with isolated PostgreSQL", () => {
     const f = setup(20164n);
     await checkpoint();
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    f.chain.transferredTokens
-      .mockResolvedValueOnce([])
-      .mockRejectedValueOnce(new Error("https://rpc.example.test/fake-key"));
+    f.chain.transferredTokens.mockResolvedValueOnce([]).mockRejectedValueOnce(
+      new Error("https://rpc.example.test/fake-key", {
+        cause: Object.assign(new Error("secret provider response"), {
+          status: 503,
+          code: "ECONNRESET",
+        }),
+      }),
+    );
     await run(f);
     expect((await state())?.last_block).toBe("10100");
     expect(JSON.stringify(log.mock.calls)).not.toContain(
       "https://rpc.example.test/fake-key",
     );
-    expect(log).toHaveBeenCalled();
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify({
+        event: "muse.sweep.failed",
+        reason: "rpc",
+        status: 503,
+        code: "ECONNRESET",
+      }),
+    );
     f.chain.transferredTokens.mockResolvedValue([]);
     await run(f);
     expect(f.chain.transferredTokens).toHaveBeenNthCalledWith(
@@ -202,7 +215,7 @@ describe("scheduled muse Transfer sweep with isolated PostgreSQL", () => {
       f.setOwner(1, addresses.stranger);
       f.setOwner(2, addresses.stranger);
       f.chain.transferredTokens.mockResolvedValue([1, 2]);
-      vi.spyOn(console, "error").mockImplementation(() => {});
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
       if (failure === "rpc")
         f.chain.ownerOf.mockRejectedValueOnce(new Error("offline"));
       else {
@@ -216,16 +229,257 @@ describe("scheduled muse Transfer sweep with isolated PostgreSQL", () => {
       await run(f);
       expect((await state())?.last_block).toBe("100");
       expect((await bindings()).every((b) => b.ended_at === null)).toBe(true);
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        JSON.stringify({
+          event: "muse.sweep.failed",
+          reason: failure === "rpc" ? "rpc" : "musegod_stale",
+        }),
+      );
     },
   );
 
-  it("does not initialize a checkpoint when the first binding check fails", async () => {
+  it.each(["rpc", "upstream", "stale"])(
+    "does not initialize a checkpoint and logs the reason on %s failure",
+    async (failure) => {
+      const f = setup();
+      await start(f);
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      if (failure === "rpc")
+        f.chain.ownerOf.mockRejectedValue(new Error("offline"));
+      else if (failure === "upstream")
+        f.musegod.muse.mockRejectedValue(new Error("secret upstream URL"));
+      else {
+        const muse = f.musegod.muse.getMockImplementation()!;
+        f.musegod.muse.mockImplementation(async (id) => ({
+          ...(await muse(id)),
+          stale: true,
+        }));
+      }
+      await run(f);
+      expect(await state()).toBeUndefined();
+      expect((await bindings())[0].ended_at).toBeNull();
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        JSON.stringify({
+          event: "muse.sweep.failed",
+          reason: failure === "rpc" ? "rpc" : "musegod_stale",
+        }),
+      );
+    },
+  );
+
+  it.each([
+    { status: 429, code: -32005 },
+    { status: "https://rpc.example.test/secret", code: "secret provider code" },
+    { status: 999, code: Infinity },
+  ])("logs only safe RPC head status/code (%j)", async (details) => {
+    const f = setup();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.chain.headBlock.mockRejectedValue(
+      Object.assign(new Error("https://rpc.example.test/secret"), details),
+    );
+    expect(await run(f)).toEqual({
+      skipped: false,
+      from: null,
+      to: null,
+      ended: 0,
+    });
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify({
+        event: "muse.sweep.failed",
+        reason: "rpc",
+        ...(details.status === 429 ? details : {}),
+      }),
+    );
+    expect(await state()).toBeUndefined();
+  });
+
+  it.each([false, true])(
+    "treats a failed linked-wallet ownership check as external, without RPC metadata (initialized=%s)",
+    async (initialized) => {
+      const f = setup();
+      await start(f);
+      if (initialized) await checkpoint();
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      f.wallets.linkedAddresses.mockRejectedValue(
+        Object.assign(new Error("https://privy.example.test/secret"), {
+          status: 503,
+          code: "ECONNRESET",
+        }),
+      );
+      await run(f);
+      expect((await state())?.last_block).toBe(initialized ? "100" : undefined);
+      expect((await bindings())[0].ended_at).toBeNull();
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        JSON.stringify({ event: "muse.sweep.failed", reason: "rpc" }),
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "logs database query failures and rolls back binding changes (initialized=%s)",
+    async (initialized) => {
+      const f = setup();
+      await start(f);
+      if (initialized) await checkpoint();
+      f.setOwner(1, addresses.stranger);
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      const query = Database.prototype.query;
+      vi.spyOn(Database.prototype, "query").mockImplementation(async function (
+        this: Database,
+        text,
+        values,
+      ) {
+        if (text.startsWith("INSERT INTO musecity.muse_sweep"))
+          throw Object.assign(new Error("postgres://secret-connection"), {
+            status: 503,
+            code: "ECONNRESET",
+          });
+        return query.call(this, text, values);
+      });
+      await run(f);
+      expect((await state())?.last_block).toBe(initialized ? "100" : undefined);
+      expect((await bindings())[0].ended_at).toBeNull();
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        JSON.stringify({ event: "muse.sweep.failed", reason: "database" }),
+      );
+    },
+  );
+
+  it("does not leak database connection failures", async () => {
+    const f = setup();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(pg.Client.prototype, "connect").mockRejectedValueOnce(
+      new Error("postgres://secret-connection"),
+    );
+    await expect(run(f)).resolves.toEqual({
+      skipped: false,
+      from: null,
+      to: null,
+      ended: 0,
+    });
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify({ event: "muse.sweep.failed", reason: "database" }),
+    );
+  });
+
+  it("classifies a failed rollback as database even after an RPC failure", async () => {
+    const f = setup();
+    await checkpoint();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.chain.transferredTokens.mockRejectedValue(new Error("secret RPC URL"));
+    const transaction = Database.prototype.transaction;
+    vi.spyOn(Database.prototype, "transaction").mockImplementationOnce(
+      async function <T>(this: Database, fn: () => Promise<T>): Promise<T> {
+        const query = this.client.query.bind(this.client);
+        const spy = vi.spyOn(this.client, "query");
+        spy.mockImplementation((...args: Parameters<typeof query>) => {
+          // Finish the real rollback before injecting its rejection so this
+          // failure-path test leaves the isolated database clean.
+          if (args[0] === "ROLLBACK")
+            return query("ROLLBACK").then(() => {
+              throw new Error("postgres://secret-rollback");
+            });
+          return query(...args);
+        });
+        return transaction.call(this, fn) as Promise<T>;
+      },
+    );
+    await run(f);
+    expect((await state())?.last_block).toBe("100");
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify({ event: "muse.sweep.failed", reason: "database" }),
+    );
+  });
+
+  it("rereads the shared checkpoint when another run commits between its chunks", async () => {
+    const f = setup(30164n);
+    await checkpoint();
+    f.chain.transferredTokens.mockResolvedValue([]);
+    const transaction = Database.prototype.transaction;
+    let entered!: () => void, release!: () => void;
+    const observed = new Promise<void>((r) => {
+      entered = r;
+    });
+    const blocked = new Promise<void>((r) => {
+      release = r;
+    });
+    let paused = false;
+    vi.spyOn(Database.prototype, "transaction").mockImplementation(
+      async function <T>(this: Database, fn: () => Promise<T>): Promise<T> {
+        const value = (await transaction.call(this, fn)) as T;
+        if (!paused) {
+          paused = true;
+          entered();
+          await blocked;
+        }
+        return value;
+      },
+    );
+    const first = run(f);
+    await observed;
+    let second!: Awaited<ReturnType<typeof run>>,
+      firstResult!: Awaited<ReturnType<typeof run>>;
+    try {
+      second = await sweepMuseTransfers(config.testUrl, {
+        ...f.deps,
+        chain: { ...f.chain, headBlock: async () => 20164n },
+      });
+    } finally {
+      release();
+      firstResult = await first;
+    }
+    expect(second).toEqual({
+      skipped: false,
+      from: "10101",
+      to: "20100",
+      ended: 0,
+    });
+    expect(firstResult).toEqual({
+      skipped: false,
+      from: "101",
+      to: "30100",
+      ended: 0,
+    });
+    expect(f.chain.transferredTokens.mock.calls).toEqual([
+      [101n, 10100n],
+      [10101n, 20100n],
+      [20101n, 30100n],
+    ]);
+    expect((await state())?.last_block).toBe("30100");
+  });
+
+  it("allows only one first initialization while the checkpoint is absent", async () => {
     const f = setup();
     await start(f);
-    f.chain.ownerOf.mockRejectedValue(new Error("offline"));
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    await run(f);
-    expect(await state()).toBeUndefined();
+    const muse = f.musegod.muse.getMockImplementation()!;
+    let entered!: () => void, release!: () => void;
+    const observed = new Promise<void>((r) => {
+      entered = r;
+    });
+    const blocked = new Promise<void>((r) => {
+      release = r;
+    });
+    f.musegod.muse.mockClear().mockImplementationOnce(async (id) => {
+      entered();
+      await blocked;
+      return muse(id);
+    });
+    const first = run(f);
+    await observed;
+    try {
+      expect(await run(f)).toEqual({
+        skipped: true,
+        from: null,
+        to: null,
+        ended: 0,
+      });
+      expect(f.musegod.muse).toHaveBeenCalledTimes(1);
+      expect(await state()).toBeUndefined();
+    } finally {
+      release();
+      await first;
+    }
+    expect((await state())?.last_block).toBe("10100");
   });
 
   it("never runs twice at once and releases the lock after finishing", async () => {
