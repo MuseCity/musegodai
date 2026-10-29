@@ -22,13 +22,15 @@ import {
   type CommunityNotification,
   type ReportView,
   type Profile,
+  type Attribution,
+  type PublicAgent,
   type PublicAgentCard,
   type WorkView,
 } from "../shared/contracts";
 
 type TargetKind = "work" | "post";
 const agentSql = (alias: string) =>
-  `CASE WHEN ${alias}.id IS NULL THEN NULL ELSE jsonb_build_object('id',${alias}.id,'name',${alias}.name) END`;
+  `CASE WHEN ${alias}.id IS NULL THEN NULL ELSE jsonb_build_object('id',${alias}.id,'name',${alias}.name,'muse',(SELECT mb.token_id FROM musecity.muse_bindings mb WHERE mb.agent_id=${alias}.id AND mb.ended_at IS NULL)) END`;
 export const unblockedSql = (owner: string, viewer: string) =>
   `NOT EXISTS(SELECT 1 FROM musecity.blocks b WHERE (b.blocker_id=${viewer} AND b.blocked_id=${owner}) OR (b.blocked_id=${viewer} AND b.blocker_id=${owner}))`;
 export async function requireUnblocked(
@@ -127,10 +129,11 @@ export async function neighbors(
       id: string;
       name: string;
       description: string;
+      muse: number | null;
       owner: Profile;
       createdAt: Date;
     }>(
-      `SELECT g.id,g.name,g.description,${profileSql("a")} AS owner,g.created_at AS "createdAt"
+      `SELECT g.id,g.name,g.description,(SELECT mb.token_id FROM musecity.muse_bindings mb WHERE mb.agent_id=g.id AND mb.ended_at IS NULL) AS muse,${profileSql("a")} AS owner,g.created_at AS "createdAt"
        FROM musecity.agents g JOIN musecity.accounts a ON a.id=g.owner_account_id
        WHERE g.public_visible AND g.status<>'revoked' AND a.status='active' AND a.joined_at IS NOT NULL
        AND ${unblockedSql("a.id", "$2")}
@@ -182,8 +185,8 @@ export async function neighbor(
   requireValue(a, 404, "NOT_FOUND", "Neighbor not found.");
   if (viewer) await requireUnblocked(db, viewer.account.id, a.id);
   const agents = a.joined_at
-    ? await db.query<{ id: string; name: string; description: string }>(
-        "SELECT id,name,description FROM musecity.agents WHERE owner_account_id=$1 AND public_visible AND status<>'revoked' ORDER BY created_at,id",
+    ? await db.query<PublicAgent>(
+        "SELECT g.id,g.name,g.description,(SELECT mb.token_id FROM musecity.muse_bindings mb WHERE mb.agent_id=g.id AND mb.ended_at IS NULL) AS muse FROM musecity.agents g WHERE g.owner_account_id=$1 AND g.public_visible AND g.status<>'revoked' ORDER BY g.created_at,g.id",
         [a.id],
       )
     : [];
@@ -317,7 +320,7 @@ export async function communityFeed(
     payload: unknown;
     searchText: string;
     owner: Profile;
-    agent: { id: string; name: string } | null;
+    agent: Attribution;
   }>(
     `
  WITH entries AS (

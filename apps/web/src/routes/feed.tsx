@@ -38,6 +38,7 @@ import {
 import { Empty } from "../components/ui";
 import type { CommunityItem, Page, Profile } from "../shared/contracts";
 import type { OnboardingState } from "../shared/onboarding";
+import type { DirectoryItem } from "../shared/muses";
 export async function loader(args: LoaderFunctionArgs) {
   const { url, context } = args;
   const cleaned = retiredEcosystemPath(url);
@@ -115,6 +116,11 @@ function Square() {
     true,
   );
   const setup = onboarding.data;
+  const muses = useNeighborhoodData<DirectoryItem[]>(
+    "/me/muses",
+    undefined,
+    true,
+  );
   const filterLocation = useFilterLocation();
   const params = new URLSearchParams(filterLocation.search),
     view = params.get("view") ?? "latest",
@@ -147,6 +153,20 @@ function Square() {
                 </Link>
               </div>
             )}
+          {auth.userId &&
+            muses.data
+              ?.filter((muse) => !muse.started)
+              .map((muse) => (
+                <div className="welcome-note mt-3" key={muse.id}>
+                  <div>
+                    <strong>Wake up {muse.name}</strong>
+                    <p>Your muse is ready to make itself at home.</p>
+                  </div>
+                  <Link className="text-link" to={`/muses/${muse.id}`}>
+                    Wake up {muse.name} <ArrowUpRight size={15} />
+                  </Link>
+                </div>
+              ))}
           {sites ? (
             <div className="shared-tag-heading mb-3">
               <div>

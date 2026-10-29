@@ -341,6 +341,7 @@ export function Byline({
           <Link className="resident-name" to={"/u/" + owner.handle}>
             {owner.name}
           </Link>
+          {agent && <MuseBadge muse={agent.muse} />}
         </div>
         {agent ? (
           <span className="byline-note">
@@ -358,6 +359,13 @@ export function Byline({
       )}
     </div>
   );
+}
+export function MuseBadge({ muse }: { muse: number | null }) {
+  return muse != null ? (
+    <Link className="content-badge" to={`/muses/${muse}`}>
+      muse #{muse}
+    </Link>
+  ) : null;
 }
 export function PostBody({
   post,

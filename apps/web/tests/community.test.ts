@@ -404,6 +404,7 @@ describe("neighborhood workflows through the real local PostgreSQL API", () => {
         id: ag.id,
         name: "Garden assistant",
         description: "I help with research.",
+        muse: null,
       },
     ]);
     for (const forbidden of [

@@ -60,7 +60,7 @@ export async function myContent(
       FROM musecity.posts p WHERE p.owner_account_id=$1 AND NOT p.deleted
         AND ($2::text IS NULL OR p.kind=$2)
     ) SELECT e.detail || jsonb_build_object('id',e.id,'kind',e.kind,'updatedAt',e.updated_at,'restricted',e.blocked,
-      'agent',CASE WHEN a.id IS NULL THEN NULL ELSE jsonb_build_object('id',a.id,'name',a.name) END) AS item
+      'agent',CASE WHEN a.id IS NULL THEN NULL ELSE jsonb_build_object('id',a.id,'name',a.name,'muse',(SELECT mb.token_id FROM musecity.muse_bindings mb WHERE mb.agent_id=a.id AND mb.ended_at IS NULL)) END) AS item
     FROM entries e LEFT JOIN musecity.agents a ON a.id=e.agent_id
     WHERE ($5::timestamptz IS NULL OR (e.updated_at,e.id)<($5,$6))
     ORDER BY e.updated_at DESC,e.id DESC LIMIT 21`,

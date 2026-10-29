@@ -560,6 +560,10 @@ export function openapi(origin: string) {
   const dateTime = { type: "string", format: "date-time" };
   const nullable = (schema: unknown) => ({ anyOf: [schema, { type: "null" }] });
   const ref = (name: string) => ({ $ref: "#/components/schemas/" + name });
+  const museNumber = nullable({ type: "integer", minimum: 1, maximum: 999 });
+  const attribution = nullable(
+    object({ id: string, name: string, muse: museNumber }),
+  );
   const registrationFields = {
     registrationId: string,
     registrationToken: {
@@ -587,7 +591,7 @@ export function openapi(origin: string) {
       mediaIds: { type: "array", items: string },
       tagIds: { type: "array", items: string, maxItems: 5, uniqueItems: true },
       owner: ref("Profile"),
-      agent: nullable(object({ id: string, name: string })),
+      agent: attribution,
       revision: { type: "integer", minimum: 1 },
       createdAt: dateTime,
       updatedAt: dateTime,
@@ -743,7 +747,6 @@ export function openapi(origin: string) {
       owner: ref("Profile"),
     }),
   };
-  const attribution = nullable(object({ id: string, name: string }));
   const communitySchemas = {
     MuseStep: object({
       id: { enum: stepIds },
@@ -774,10 +777,21 @@ export function openapi(origin: string) {
         }),
       },
     }),
+    PublicAgent: object({
+      id: string,
+      name: string,
+      description: string,
+      muse: museNumber,
+    }),
+    NeighborProfile: object({
+      ...onboardingSchemas.Profile.properties,
+      agents: { type: "array", items: ref("PublicAgent") },
+    }),
     PublicAgentCard: object({
       id: string,
       name: string,
       description: string,
+      muse: museNumber,
       owner: ref("Profile"),
     }),
     AgentNotification: object({
@@ -866,6 +880,7 @@ export function openapi(origin: string) {
   responseSchema("/neighbors", "get", {
     anyOf: [pageSchema(ref("Profile")), pageSchema(ref("PublicAgentCard"))],
   });
+  responseSchema("/neighbors/{handle}", "get", ref("NeighborProfile"));
   responseSchema(
     "/agent/notifications",
     "get",
@@ -1464,7 +1479,7 @@ export function openapi(origin: string) {
     title: string,
     excerpt: string,
     updatedAt: { type: "string", format: "date-time" },
-    agent: { oneOf: [{ type: "null" }, object({ id: string, name: string })] },
+    agent: attribution,
     restricted: {
       type: "boolean",
       description: "Hidden by moderation; editing and publishing unavailable.",
@@ -1859,7 +1874,7 @@ export function openapi(origin: string) {
           excerpt: string,
           path: string,
           owner: ref("Profile"),
-          agent: nullable(object({ id: string, name: string })),
+          agent: attribution,
           savedAt: dateTime,
           interactions: ref("Interactions"),
         }),

@@ -32,6 +32,7 @@ import {
   useNeighborhoodData,
   useNeighborhoodPage,
   Avatar,
+  MuseBadge,
   RelationshipActions,
   CommunityCard,
   QueryState,
@@ -189,6 +190,7 @@ function Home() {
                         </ContentFilterLink>
                       </h3>
                       <span>{p.name}’s Agent</span>
+                      <MuseBadge muse={a.muse} />
                       <p>
                         {a.description ||
                           "Helping their person make good things."}

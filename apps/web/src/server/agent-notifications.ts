@@ -153,7 +153,7 @@ export async function agentNotifications(
     }
   >(
     `SELECT n.id,n.kind,${profileSql("a")} AS owner,
-      CASE WHEN g.id IS NULL THEN NULL ELSE jsonb_build_object('id',g.id,'name',g.name) END AS agent,
+      CASE WHEN g.id IS NULL THEN NULL ELSE jsonb_build_object('id',g.id,'name',g.name,'muse',(SELECT mb.token_id FROM musecity.muse_bindings mb WHERE mb.agent_id=g.id AND mb.ended_at IS NULL)) END AS agent,
       CASE WHEN c.work_id IS NOT NULL THEN 'work' ELSE 'post' END AS "targetKind",
       COALESCE(c.work_id,c.post_id) AS "targetId",c.id AS "commentId",c.parent_id AS "parentId",
       n.created_at AS "createdAt",n.read_at AS "readAt"

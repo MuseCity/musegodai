@@ -15,8 +15,9 @@ import {
   publicMuse,
 } from "../src/server/muses";
 import type { AccountRow } from "../src/server/schema";
+import { connectionScopes, type PostView } from "../src/shared/contracts";
 import { placeIds } from "../src/shared/muses";
-import { config, fixture, reset } from "./helpers";
+import { article, config, fixture, reset } from "./helpers";
 import { addresses, withMuses } from "./muse-fakes";
 
 beforeEach(reset);
@@ -170,6 +171,180 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
       addresses.external,
     ]);
     expect((await rows())[0].holder_address).toBe(addresses.external);
+  });
+
+  it("projects only an active muse binding onto historical content and public Agent cards", async () => {
+    const f = withMuses(fixture());
+    const owner = await f.call("/me", {
+      method: "PATCH",
+      body: { name: "Alice", bio: "Keeper", avatarMediaId: null, join: true },
+    });
+    const bound = await connected(f);
+    const ordinaryCode = await f.call("/me/agent-connections", {
+      method: "POST",
+      body: { name: "Ordinary Agent" },
+    });
+    const ordinary = await redeem(f, ordinaryCode.data.otp);
+    await f.call(`/me/agents/${ordinary.data.agentId}`, {
+      method: "PATCH",
+      body: { confirmed: true, publicVisible: true },
+    });
+    const posts: PostView[] = [];
+    for (const active of [bound, ordinary]) {
+      const post = await f.call("/posts", {
+        method: "POST",
+        token: active.data.credential.token,
+        body: {
+          kind: "update",
+          text: "A lasting hello from " + active.data.agentId,
+        },
+      });
+      expect(post.status).toBe(201);
+      posts.push(post.data);
+    }
+    await f.call(`/me/agents/${ordinary.data.agentId}`, {
+      method: "PATCH",
+      body: {
+        confirmed: true,
+        scopes: [...connectionScopes, "community:notifications"],
+      },
+    });
+    await f.call("/me", {
+      method: "PATCH",
+      token: "fixture:bob",
+      body: { name: "Bob", bio: "Neighbor", avatarMediaId: null, join: true },
+    });
+    const bobPost = await f.call("/posts", {
+      method: "POST",
+      token: "fixture:bob",
+      body: { kind: "update", text: "A neighbor's conversation." },
+    });
+    const commentIds: string[] = [];
+    for (const postId of [bobPost.data.id, posts[1].id]) {
+      const comment = await f.call(`/posts/${postId}/comments`, {
+        method: "POST",
+        token: bound.data.credential.token,
+        body: { text: "A reply from Bard." },
+      });
+      expect(comment.status).toBe(201);
+      commentIds.push(comment.data.id);
+    }
+    expect(
+      (
+        await f.call(`/posts/${posts[0].id}/interactions`, {
+          method: "PUT",
+          token: "fixture:bob",
+          body: { action: "save", value: true },
+        })
+      ).status,
+    ).toBe(200);
+    const draft = await f.call("/works", {
+      method: "POST",
+      token: bound.data.credential.token,
+      body: article,
+    });
+    expect(draft.status).toBe(201);
+    expect(
+      (
+        await f.call(`/works/${draft.data.workId}/publish`, {
+          method: "POST",
+          token: bound.data.credential.token,
+          body: { revisionId: draft.data.revisionId },
+        })
+      ).status,
+    ).toBe(200);
+    const check = async (muse: number | null) => {
+      for (const [index, expected] of [muse, null].entries()) {
+        const post = await f.call(`/posts/${posts[index].id}`, { token: null });
+        expect(post.status).toBe(200);
+        expect(post.data.agent.muse).toBe(expected);
+      }
+      const feed = await f.call(`/feed?owner=${owner.data.handle}`, {
+        token: null,
+      });
+      expect(feed.status).toBe(200);
+      for (const [index, expected] of [muse, null].entries())
+        expect(
+          feed.data.items.find((item: any) => item.id === posts[index].id).post
+            .agent.muse,
+        ).toBe(expected);
+      const work = await f.call(`/works/${draft.data.workId}`, { token: null });
+      expect(work.status).toBe(200);
+      expect(work.data.submittedBy.muse).toBe(muse);
+      expect(work.data.publishedBy.muse).toBe(muse);
+      expect(
+        feed.data.items.find((item: any) => item.id === draft.data.workId).work
+          .submittedBy.muse,
+      ).toBe(muse);
+      const managed = await f.call("/me/content");
+      expect(
+        managed.data.items.find((item: any) => item.id === draft.data.workId)
+          .agent.muse,
+      ).toBe(muse);
+      const directory = await f.call("/neighbors?view=agents", { token: null });
+      const comments = await f.call(`/posts/${bobPost.data.id}/comments`, {
+        token: null,
+      });
+      expect(
+        comments.data.items.find((item: any) => item.id === commentIds[0]).agent
+          .muse,
+      ).toBe(muse);
+      const notices = await f.call("/me/notifications", {
+        token: "fixture:bob",
+      });
+      expect(
+        notices.data.items.find((item: any) => item.commentId === commentIds[0])
+          .agent.muse,
+      ).toBe(muse);
+      const feedback = await f.call("/agent/notifications", {
+        token: ordinary.data.credential.token,
+      });
+      expect(
+        feedback.data.items.find(
+          (item: any) => item.commentId === commentIds[1],
+        ).agent.muse,
+      ).toBe(muse);
+      const saved = await f.call("/me/saved", { token: "fixture:bob" });
+      expect(
+        saved.data.items.find((item: any) => item.id === posts[0].id).agent
+          .muse,
+      ).toBe(muse);
+      const profile = await f.call(`/neighbors/${owner.data.handle}`, {
+        token: null,
+      });
+      for (const agents of [directory.data.items, profile.data.agents]) {
+        expect(
+          agents.find((agent: any) => agent.id === bound.data.agentId).muse,
+        ).toBe(muse);
+        expect(
+          agents.find((agent: any) => agent.id === ordinary.data.agentId).muse,
+        ).toBeNull();
+      }
+    };
+    await check(1);
+    f.setOwner(1, addresses.stranger);
+    expect(
+      (await f.call("/muses/1", { token: null })).data.startedAt,
+    ).toBeNull();
+    expect((await rows())[0].end_reason).toBe("transferred");
+    await check(null);
+    await f.call(`/me/agents/${bound.data.agentId}`, {
+      method: "PATCH",
+      body: { confirmed: true, publicVisible: false },
+    });
+    expect(
+      (await f.call("/neighbors?view=agents", { token: null })).data.items.map(
+        (agent: any) => agent.id,
+      ),
+    ).not.toContain(bound.data.agentId);
+    expect(
+      (
+        await f.call(`/neighbors/${owner.data.handle}`, { token: null })
+      ).data.agents.map((agent: any) => agent.id),
+    ).not.toContain(bound.data.agentId);
+    expect(
+      (await f.call(`/posts/${posts[0].id}`, { token: null })).data.agent,
+    ).toMatchObject({ id: bound.data.agentId, muse: null });
   });
 
   it("keeper via delegate", async () => {

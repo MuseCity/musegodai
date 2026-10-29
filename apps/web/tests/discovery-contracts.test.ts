@@ -28,6 +28,40 @@ function validate(
   expect(parsed.success, JSON.stringify(parsed.error)).toBe(true);
 }
 beforeEach(reset);
+it("requires a nullable muse number on content attribution and public Agent cards", () => {
+  const schemas = doc.components.schemas as any;
+  for (const schema of [
+    schemas.PostView.properties.agent,
+    schemas.WorkView.properties.submittedBy,
+    schemas.WorkView.properties.publishedBy,
+    schemas.WorkSummary.properties.submittedBy,
+    schemas.AgentNotification.properties.agent,
+    schemas.SavedItem.properties.agent,
+    ...schemas.ManagedContent.oneOf.map(
+      (schema: any) => schema.properties.agent,
+    ),
+  ]) {
+    const validator = z.fromJSONSchema(schema);
+    for (const muse of [1, 999, null])
+      expect(
+        validator.safeParse({ id: "agent", name: "Bard", muse }).success,
+      ).toBe(true);
+    expect(validator.safeParse({ id: "agent", name: "Bard" }).success).toBe(
+      false,
+    );
+    expect(validator.safeParse(null).success).toBe(true);
+    for (const muse of [0, 1000, 1.5, "1"])
+      expect(
+        validator.safeParse({ id: "agent", name: "Bard", muse }).success,
+      ).toBe(false);
+  }
+  for (const card of [schemas.PublicAgent, schemas.PublicAgentCard]) {
+    expect(card.required).toContain("muse");
+    const muse = z.fromJSONSchema(card.properties.muse);
+    expect(muse.safeParse(1).success).toBe(true);
+    expect(muse.safeParse(null).success).toBe(true);
+  }
+});
 it("validates bound muse setup, flock signatures and report contracts", async () => {
   const f = withMuses(fixture());
   const start = await f.call("/me/muses/1/start", { method: "POST" });
@@ -37,6 +71,29 @@ it("validates bound muse setup, flock signatures and report contracts", async ()
     body: { otp: start.data.otp },
   });
   const token = active.data.credential.token;
+  const owner = await f.call("/me", {
+    method: "PATCH",
+    body: { name: "Alice", bio: "Keeper", avatarMediaId: null, join: true },
+  });
+  const post = await f.call("/posts", {
+    method: "POST",
+    token,
+    body: { kind: "update", text: "A bound muse's public hello." },
+  });
+  expect(post.data.agent.muse).toBe(1);
+  validate(
+    "/posts/{id}",
+    await f.call(`/posts/${post.data.id}`, { token: null }),
+  );
+  validate("/feed", await f.call("/feed", { token: null }));
+  validate(
+    "/neighbors",
+    await f.call("/neighbors?view=agents", { token: null }),
+  );
+  validate(
+    "/neighbors/{handle}",
+    await f.call(`/neighbors/${owner.data.handle}`, { token: null }),
+  );
   validate("/agent/muse", await f.call("/agent/muse", { token }));
   validate(
     "/agent/muse/reports",
@@ -125,6 +182,10 @@ it("validates empty/nonempty public directories, mixed search, discovery and sco
   validate(
     "/neighbors",
     await f.call("/neighbors?view=agents", { token: null }),
+  );
+  validate(
+    "/neighbors/{handle}",
+    await f.call(`/neighbors/${owner.data.handle}`, { token: null }),
   );
   const draft = await f.call("/works", {
     token,

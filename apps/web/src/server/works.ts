@@ -66,8 +66,8 @@ export const originalitySql = (
 const viewSql = `SELECT w.id AS "workId",r.id AS "revisionId",w.published_revision_id AS "publishedRevisionId",w.status,r.payload AS body,
  ${originalitySql()} AS originality,
  ${profileSql("a")} AS owner,
- CASE WHEN s.id IS NULL THEN NULL ELSE jsonb_build_object('id',s.id,'name',s.name) END AS "submittedBy",
- CASE WHEN p.id IS NULL THEN NULL ELSE jsonb_build_object('id',p.id,'name',p.name) END AS "publishedBy",
+ CASE WHEN s.id IS NULL THEN NULL ELSE jsonb_build_object('id',s.id,'name',s.name,'muse',(SELECT mb.token_id FROM musecity.muse_bindings mb WHERE mb.agent_id=s.id AND mb.ended_at IS NULL)) END AS "submittedBy",
+ CASE WHEN p.id IS NULL THEN NULL ELSE jsonb_build_object('id',p.id,'name',p.name,'muse',(SELECT mb.token_id FROM musecity.muse_bindings mb WHERE mb.agent_id=p.id AND mb.ended_at IS NULL)) END AS "publishedBy",
  w.published_at AS "publishedAt",w.updated_at AS "updatedAt"
  FROM musecity.works w JOIN musecity.accounts a ON a.id=w.owner_account_id
  LEFT JOIN musecity.agents s ON s.id=w.created_by_agent_id LEFT JOIN musecity.agents p ON p.id=w.published_by_agent_id`;

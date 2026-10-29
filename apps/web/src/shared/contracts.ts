@@ -354,8 +354,8 @@ export type WorkView = {
   status: "draft" | "published" | "unpublished" | "deleted";
   body: WorkContent;
   owner: Profile;
-  submittedBy: { id: string; name: string } | null;
-  publishedBy: { id: string; name: string } | null;
+  submittedBy: Attribution;
+  publishedBy: Attribution;
   publishedAt: string | null;
   updatedAt: string;
 };
@@ -439,7 +439,11 @@ export const postSchema = z
   })
   .strict();
 export type PostContent = z.infer<typeof postSchema>;
-export type Attribution = { id: string; name: string } | null;
+export type Attribution = {
+  id: string;
+  name: string;
+  muse: number | null;
+} | null;
 export type PostView = PostContent & {
   interactions: Interactions;
   id: string;
@@ -456,7 +460,12 @@ export type CommunityItem = {
   matchExcerpt?: string;
 } & ({ kind: "work"; work: WorkView } | { kind: "update"; post: PostView });
 export type Page<T> = { items: T[]; nextCursor: string | null };
-export type PublicAgent = { id: string; name: string; description: string };
+export type PublicAgent = {
+  id: string;
+  name: string;
+  description: string;
+  muse: number | null;
+};
 export type PublicAgentCard = PublicAgent & { owner: Profile };
 export type AgentNotification = {
   id: string;

@@ -15,6 +15,7 @@ import { ContentSearch } from "../components/content-search";
 import { retiredEcosystemPath } from "../shared/content-navigation";
 import {
   Avatar,
+  MuseBadge,
   QueryState,
   useNeighborhoodPage,
   LoadMore,
@@ -111,7 +112,7 @@ function Directory() {
             {query.data.items.map((p) =>
               "owner" in p ? (
                 <article className="neighbor-card" key={p.id}>
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
                     <Bot
                       size={28}
                       className="text-brand shrink-0"
@@ -123,6 +124,7 @@ function Directory() {
                     >
                       {p.name}
                     </Link>
+                    <MuseBadge muse={p.muse} />
                   </div>
                   <p className="neighbor-bio">
                     {p.description || "Helping their person make good things."}
