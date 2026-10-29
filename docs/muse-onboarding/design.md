@@ -150,7 +150,7 @@ Privy supports wallet login, so a keeper can sign in directly with the wallet th
 
 **Start card** (hidden once everything is done):
 
-1. `Get Muse`: `open muse.ai ↗`; skip if you have it.
+1. `Get Muse`: `open muse.ai ↗` links to `https://muse.ai/join`; skip if you have it. Under the link (owner decision, 2026-10-29), the card shows the invite code with a copy button: `Invite code 4ZSR0R: redeem it in Muse Settings within 48 hours of joining. You and the musegod.ai team each get 1 billion Muse tokens.` The URL and code live in one shared constant (`museInvite` in `W/src/shared/muses.ts`), so changing or removing the code is a one-line change.
 2. `Give Muse this line`: the line, with a copy button.
 
    ```
