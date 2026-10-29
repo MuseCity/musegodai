@@ -24,7 +24,8 @@ const entriesSql = `WITH public_works AS (
 ), builders AS (
  SELECT * FROM jsonb_to_recordset($1::jsonb) AS b(path text,"guidePath" text,aliases text[])
 ), entries AS (
- SELECT path,NULL::timestamptz AS lastmod FROM (VALUES ('/'),('/?view=sites'),('/neighbors'),('/governance'),('/agents'),('/agents/dot'),('/agents/mcp')) AS pages(path)
+ SELECT path,NULL::timestamptz AS lastmod FROM (VALUES ('/'),('/?view=sites'),('/neighbors'),('/governance'),('/agents'),('/agents/dot'),('/agents/mcp'),('/muses')) AS pages(path)
+ UNION ALL SELECT '/muses/'||n,NULL::timestamptz FROM generate_series(1,999) n
  UNION ALL SELECT "guidePath",NULL::timestamptz FROM builders
  UNION ALL SELECT b.path,NULL::timestamptz FROM builders b WHERE EXISTS(
  SELECT 1 FROM public_works w WHERE w.payload->>'type'='website' AND w.payload->'aiDeclaration'='true'::jsonb

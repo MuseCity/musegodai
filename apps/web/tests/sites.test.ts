@@ -75,8 +75,22 @@ describe("Sites through the real local PostgreSQL API", () => {
   it("classifies published source declarations, with matching SSR and sitemap lifecycle", async () => {
     const f = fixture(),
       image = await cover(f);
-    const sitemap = async () =>
-      (await f.app.request("http://localhost/sitemap.xml")).text();
+    const sitemap = async () => {
+      const response = await f.app.request("http://localhost/sitemap.xml");
+      expect(response.status).toBe(200);
+      const xml = await response.text();
+      if (!xml.includes("<sitemapindex")) return xml;
+      const parts = [...xml.matchAll(/<loc>(.*?)<\/loc>/g)].map((m) => m[1]);
+      return (
+        await Promise.all(
+          parts.map(async (path) => {
+            const part = await f.app.request(path);
+            expect(part.status).toBe(200);
+            return part.text();
+          }),
+        )
+      ).join("");
+    };
     const context = new RouterContextProvider();
     context.set(servicesContext, {
       appId: "",

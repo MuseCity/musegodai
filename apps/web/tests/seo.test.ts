@@ -34,7 +34,69 @@ const locations = (xml: string) =>
   [...xml.matchAll(/<loc>(.*?)<\/loc>/g)].map((m) =>
     m[1].replaceAll("&amp;", "&"),
   );
+async function sitemapBody(f: ReturnType<typeof fixture>) {
+  const response = await f.app.request("http://localhost/sitemap.xml");
+  expect(response.status).toBe(200);
+  const xml = await response.text();
+  if (!xml.includes("<sitemapindex")) return xml;
+  return (
+    await Promise.all(
+      locations(xml).map(async (path) => {
+        const part = await f.app.request(path);
+        expect(part.status).toBe(200);
+        const body = await part.text();
+        expect(locations(body).length).toBeLessThanOrEqual(sitemapChunkSize);
+        return body;
+      }),
+    )
+  ).join("");
+}
 describe("public search discovery", () => {
+  it("indexes numbered muse pages and the directory, preserving only its filter", () => {
+    for (const path of [
+      "/muses",
+      "/muses?filter=awake",
+      "/muses/1",
+      "/muses/999",
+    ])
+      expect(publicIndexable(new URL(path, origin)), path).toBe(true);
+    for (const path of [
+      "/muses/bard",
+      "/muses?q=bard",
+      "/muses/1/start.md",
+      "/me/muses/1",
+    ])
+      expect(publicIndexable(new URL(path, origin)), path).toBe(false);
+    expect(
+      canonicalPath(
+        new URL("/muses/1?filter=mine&q=bard&utm_source=x", origin),
+      ),
+    ).toBe("/muses/1");
+    expect(
+      canonicalPath(new URL("/muses?filter=awake&q=bard&utm_source=x", origin)),
+    ).toBe("/muses?filter=awake");
+    expect(
+      pageSeo(origin, new URL("/muses/1", origin), { title: "Bard" }),
+    ).toMatchObject({ canonical: origin + "/muses/1", noindex: false });
+  });
+
+  it("lists the directory and exactly all 999 numbered muses in the sitemap without private documents", async () => {
+    const urls = locations(await sitemapBody(fixture()));
+    expect(urls).toContain("http://localhost/muses");
+    expect(urls.filter((url) => /\/muses\/\d+$/.test(url)).sort()).toEqual(
+      Array.from(
+        { length: 999 },
+        (_, i) => `http://localhost/muses/${i + 1}`,
+      ).sort(),
+    );
+    expect(urls).not.toContain("http://localhost/muses/1000");
+    expect(
+      urls.some(
+        (url) => url.endsWith("/start.md") || url.includes("/me/muses"),
+      ),
+    ).toBe(false);
+    expect(new Set(urls).size).toBe(urls.length);
+  });
   it("uses React Router's normalized document URL for client loader metadata", () => {
     const context = new RouterContextProvider();
     context.set(servicesContext, { appId: "", origin, api: fixture().app });
@@ -201,8 +263,7 @@ describe("public search discovery", () => {
     const f = fixture();
     const work = (await f.call("/works", { method: "POST", body: article }))
       .data;
-    const sitemap = async () =>
-      (await f.app.request("http://localhost/sitemap.xml")).text();
+    const sitemap = () => sitemapBody(f);
     expect(await sitemap()).not.toContain("/works/" + work.workId);
     const publicPages = locations(await sitemap());
     expect(publicPages).toContain("http://localhost/agents");
@@ -281,6 +342,7 @@ describe("public search discovery", () => {
   it("enumerates bounded sitemap shards with no duplicates and rejects invalid shard numbers", async () => {
     const f = fixture(),
       owner = (await f.call("/me")).data.id;
+    const baseline = locations(await sitemapBody(f)).length;
     await admin(
       "INSERT INTO musecity.posts(id,owner_account_id,kind,text) SELECT 'seo-shard-'||i,$1,'update','Sitemap fixture '||i FROM generate_series(1,$2) i",
       [owner, sitemapChunkSize + 10],
@@ -288,12 +350,16 @@ describe("public search discovery", () => {
     const index = await f.app.request("http://localhost/sitemap.xml");
     expect(index.headers.get("content-type")).toContain("application/xml");
     const parts = locations(await index.text());
-    expect(parts).toHaveLength(2);
+    expect(parts).toHaveLength(
+      Math.ceil((baseline + sitemapChunkSize + 10) / sitemapChunkSize),
+    );
     const urls = (
       await Promise.all(
-        parts.map(async (path) =>
-          locations(await (await f.app.request(path)).text()),
-        ),
+        parts.map(async (path) => {
+          const entries = locations(await (await f.app.request(path)).text());
+          expect(entries.length).toBeLessThanOrEqual(sitemapChunkSize);
+          return entries;
+        }),
       )
     ).flat();
     expect(urls.filter((u) => u.includes("/posts/seo-shard-"))).toHaveLength(
@@ -303,7 +369,7 @@ describe("public search discovery", () => {
     for (const part of [
       "0.xml",
       "-1.xml",
-      "3.xml",
+      `${parts.length + 1}.xml`,
       "1x.xml",
       "9007199254740993.xml",
     ])

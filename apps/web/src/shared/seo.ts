@@ -46,17 +46,19 @@ export function canonicalPath(url: URL) {
           "builder",
           "cursor",
         ]
-      : /^\/u\//.test(url.pathname)
-        ? ["kind", "type", "tag", "agent", "q", "cursor"]
-        : url.pathname === "/neighbors"
-          ? ["view", "q", "cursor"]
-          : galleryBuilder(url.pathname)
-            ? ["q", "cursor"]
-            : url.pathname === "/governance"
-              ? ["cursor"]
-              : /^\/(works|posts)\//.test(url.pathname)
-                ? ["commentCursor"]
-                : [];
+      : url.pathname === "/muses"
+        ? ["filter"]
+        : /^\/u\//.test(url.pathname)
+          ? ["kind", "type", "tag", "agent", "q", "cursor"]
+          : url.pathname === "/neighbors"
+            ? ["view", "q", "cursor"]
+            : galleryBuilder(url.pathname)
+              ? ["q", "cursor"]
+              : url.pathname === "/governance"
+                ? ["cursor"]
+                : /^\/(works|posts)\//.test(url.pathname)
+                  ? ["commentCursor"]
+                  : [];
   for (const key of keys) {
     const value = url.searchParams.get(key);
     if (
@@ -92,6 +94,8 @@ export function publicIndexable(url: URL) {
     url.pathname === "/governance" ||
     url.pathname === "/agents" ||
     url.pathname === "/agents/mcp" ||
+    url.pathname === "/muses" ||
+    /^\/muses\/\d+$/.test(url.pathname) ||
     /^\/(works|posts|governance)\/[^/]+$/.test(url.pathname)
   );
 }
