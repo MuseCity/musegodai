@@ -23,7 +23,7 @@ export function MuseKeeper({
   children,
 }: {
   view: MuseView;
-  onRefresh: () => Promise<void>;
+  onRefresh: (background?: boolean) => Promise<void>;
   children: ReactNode;
 }) {
   const session = useAuth();
@@ -40,6 +40,10 @@ export function MuseKeeper({
   const [code, setCode] = useState<StartResult | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState<{
+    action: string;
+    code: string;
+  } | null>(null);
   const [copyError, setCopyError] = useState("");
   const [fallback, setFallback] = useState("");
   const [copied, setCopied] = useState("");
@@ -73,13 +77,14 @@ export function MuseKeeper({
           setFallback("");
           setCopyError("");
         }
+        await onRefresh(background);
       } catch (cause) {
         if (alive.current && request === reads.current) throw cause;
       } finally {
         fetching.current--;
       }
     },
-    [api, path],
+    [api, path, onRefresh],
   );
 
   const failed = useCallback((cause: unknown) => {
@@ -97,6 +102,44 @@ export function MuseKeeper({
     } else setError(errorMessage(cause));
   }, []);
 
+  function actionFailed(action: string, cause: unknown) {
+    if (alive.current)
+      setActionError({
+        action,
+        code: cause instanceof ClientError ? cause.code : "UNKNOWN",
+      });
+  }
+  function actionNotice(action: string) {
+    if (actionError?.action !== action) return null;
+    return (
+      <div data-muse-action-error={action}>
+        <Notice>
+          {actionError.code === "MUSE_KEPT_ELSEWHERE" ? (
+            `${muse.name} is already set up by another account.`
+          ) : actionError.code === "AGENT_LIMIT" ? (
+            <>
+              Your account has 20 Agents. Remove one in{" "}
+              <Link className="text-link" to="/me/agents">
+                My agents
+              </Link>{" "}
+              to wake {muse.name}.
+            </>
+          ) : actionError.code === "NOT_MUSE_KEEPER" ? (
+            <button
+              type="button"
+              className="text-link"
+              onClick={() => session.link("wallet")}
+            >
+              Holding {muse.name}? Link the wallet that holds it
+            </button>
+          ) : (
+            `Can't update ${muse.name}'s setup right now. Please try again.`
+          )}
+        </Notice>
+      </div>
+    );
+  }
+
   useEffect(() => {
     if (!session.userId) return;
     let active = true;
@@ -112,8 +155,13 @@ export function MuseKeeper({
     };
   }, [session.userId, walletIdentity, api, refresh, failed]);
 
+  const connection = keeper?.binding?.connection;
+  const waiting =
+    !!code ||
+    (!!connection &&
+      ["waiting", "awaiting_verification"].includes(connection.status));
   useEffect(() => {
-    if (!keeper || error || busy) return;
+    if (!waiting || error || actionError || busy) return;
     const check = () => {
       if (document.visibilityState === "visible" && !working.current)
         void refresh(true).catch(failed);
@@ -126,7 +174,7 @@ export function MuseKeeper({
       window.removeEventListener("focus", check);
       document.removeEventListener("visibilitychange", check);
     };
-  }, [!!keeper, error, busy, refresh, failed]);
+  }, [waiting, error, actionError, busy, refresh, failed]);
 
   // The OTP and copied setup are kept only in this mounted account's state.
   useEffect(() => {
@@ -136,19 +184,22 @@ export function MuseKeeper({
         setCode(null);
         setFallback("");
         setCopyError("");
-        if (alive.current) void refresh().catch(failed);
+        if (alive.current && !error && !actionError)
+          void refresh().catch(failed);
       },
       Math.max(0, Date.parse(code.expiresAt) - Date.now()),
     );
     return () => window.clearTimeout(timer);
-  }, [code, refresh, failed]);
+  }, [code, error, actionError, refresh, failed]);
 
   async function copySetup(full: boolean, replace = false) {
     if (working.current || !keeper || keeper.agentLimitReached) return;
     working.current = true;
     reads.current++;
-    setBusy("copy");
+    const action = replace ? "replace" : full ? "copy-full" : "copy-line";
+    setBusy(action);
     setError("");
+    setActionError(null);
     setCopyError("");
     setCopied("");
     try {
@@ -185,9 +236,8 @@ export function MuseKeeper({
         }
       }
       await refresh();
-      if (alive.current) await onRefresh();
     } catch (cause) {
-      failed(cause);
+      actionFailed(action, cause);
     } finally {
       working.current = false;
       if (alive.current) setBusy("");
@@ -199,12 +249,13 @@ export function MuseKeeper({
       (controller) => controller.toLowerCase() === address.toLowerCase(),
     ),
   );
-  async function sign(lines: PendingLine[]) {
+  async function sign(lines: PendingLine[], group: string) {
     if (working.current || !signer) return;
     working.current = true;
     reads.current++;
-    setBusy("sign");
+    setBusy("sign-" + group);
     setError("");
+    setActionError(null);
     try {
       for (const line of lines) {
         const signature = await session.signMessage(signer, line.line);
@@ -219,7 +270,6 @@ export function MuseKeeper({
         if (!alive.current) return;
       }
       await refresh();
-      if (alive.current) await onRefresh();
     } catch (cause) {
       // A preceding prompt may already have succeeded in a multi-line batch.
       try {
@@ -227,7 +277,7 @@ export function MuseKeeper({
       } catch {
         /* Keep the original signing failure. */
       }
-      failed(cause);
+      actionFailed(group, cause);
     } finally {
       working.current = false;
       if (alive.current) setBusy("");
@@ -238,22 +288,26 @@ export function MuseKeeper({
     : "its keeper";
   function signButton(lines: PendingLine[], group: string, label: string) {
     return (
-      <button
-        type="button"
-        className="secondary"
-        data-muse-sign={group}
-        disabled={!!busy || !keeper?.binding}
-        onClick={() => (signer ? void sign(lines) : session.link("wallet"))}
-      >
-        {busy === "sign"
-          ? "Waiting for your wallet…"
-          : signer
-            ? label
-            : `Switch to the wallet that holds ${muse.name} (${owner})`}
-      </button>
+      <>
+        <button
+          type="button"
+          className="secondary"
+          data-muse-sign={group}
+          disabled={!!busy || !keeper?.binding}
+          onClick={() =>
+            signer ? void sign(lines, group) : session.link("wallet")
+          }
+        >
+          {busy === "sign-" + group
+            ? "Waiting for your wallet…"
+            : signer
+              ? label
+              : `Switch to the wallet that holds ${muse.name} (${owner})`}
+        </button>
+        {actionNotice(group)}
+      </>
     );
   }
-  const connection = keeper?.binding?.connection;
   const used =
     !!connection &&
     ["awaiting_verification", "connected", "paused", "revoked"].includes(
@@ -293,9 +347,9 @@ export function MuseKeeper({
           disabled={!!busy}
           onClick={async () => {
             setError("");
+            setActionError(null);
             try {
               await refresh();
-              if (alive.current) await onRefresh();
             } catch (cause) {
               failed(cause);
             }
@@ -349,12 +403,14 @@ export function MuseKeeper({
                 <button
                   type="button"
                   className="text-link"
+                  data-muse-restart
                   disabled={!!busy}
                   onClick={async () => {
                     if (working.current) return;
                     working.current = true;
                     setBusy("restart");
                     setError("");
+                    setActionError(null);
                     try {
                       await api(path + "/restart", {});
                       if (!alive.current) return;
@@ -362,9 +418,8 @@ export function MuseKeeper({
                       setFallback("");
                       setCopied("");
                       await refresh();
-                      if (alive.current) await onRefresh();
                     } catch (cause) {
-                      failed(cause);
+                      actionFailed("restart", cause);
                     } finally {
                       working.current = false;
                       if (alive.current) setBusy("");
@@ -373,6 +428,7 @@ export function MuseKeeper({
                 >
                   Start over
                 </button>
+                {actionNotice("restart")}
               </>
             ) : keeper.agentLimitReached ? (
               <p className="muse-profile-note">
@@ -398,44 +454,54 @@ export function MuseKeeper({
                   <p role="status">The code expired. Get a new code.</p>
                 )}
                 <div className="muse-actions">
-                  <button
-                    type="button"
-                    className="primary"
-                    data-muse-copy="line"
-                    disabled={!!busy}
-                    onClick={() => void copySetup(false)}
-                  >
-                    {busy === "copy"
-                      ? "Preparing…"
-                      : code
-                        ? "Copy line"
-                        : connection
-                          ? "Get a new code and copy"
-                          : "Copy line"}
-                  </button>
-                  <button
-                    type="button"
-                    className="text-link"
-                    data-muse-copy="full"
-                    disabled={!!busy}
-                    onClick={() => void copySetup(true)}
-                  >
-                    copy the full setup
-                  </button>
+                  <div>
+                    <button
+                      type="button"
+                      className="primary"
+                      data-muse-copy="line"
+                      disabled={!!busy}
+                      onClick={() => void copySetup(false)}
+                    >
+                      {busy === "copy-line"
+                        ? "Preparing…"
+                        : code
+                          ? "Copy line"
+                          : connection
+                            ? "Get a new code and copy"
+                            : "Copy line"}
+                    </button>
+                    {actionNotice("copy-line")}
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      className="text-link"
+                      data-muse-copy="full"
+                      disabled={!!busy}
+                      onClick={() => void copySetup(true)}
+                    >
+                      copy the full setup
+                    </button>
+                    {actionNotice("copy-full")}
+                  </div>
                 </div>
                 <p className="muse-note">
                   The code works once and expires in 10 minutes. You can replace
                   it with a new code.
                 </p>
                 {code && (
-                  <button
-                    type="button"
-                    className="text-link"
-                    disabled={!!busy}
-                    onClick={() => void copySetup(false, true)}
-                  >
-                    Replace code
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="text-link"
+                      data-muse-replace
+                      disabled={!!busy}
+                      onClick={() => void copySetup(false, true)}
+                    >
+                      Replace code
+                    </button>
+                    {actionNotice("replace")}
+                  </>
                 )}
               </>
             )}

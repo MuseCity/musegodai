@@ -916,6 +916,43 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
     expect(await rows()).toHaveLength(0);
   });
 
+  it("offers only the pot without an active binding owned by the account", async () => {
+    const f = withMuses(fixture());
+    const check = async (token = "fixture:alice") => {
+      const result = await f.call("/me/muses/1", { token });
+      expect(result.status).toBe(200);
+      expect(result.data.binding).toBeNull();
+      expect(result.data.reports).toEqual([]);
+      expect(result.data.needsYou).toEqual({
+        sign: [],
+        sending: 0,
+        expired: 0,
+        openseaLink: null,
+        verificationCode: false,
+        pot: { closes: f.week.closes },
+      });
+    };
+    await check();
+    await start(f);
+    const binding = (await rows())[0];
+    await withDatabase(config.testAdminUrl, async (d) => {
+      await d.query(
+        "INSERT INTO musecity.muse_reports(binding_id,step,status,wallet_address,code) VALUES($1,'opensea','needs_you',$2,'opensea_link'),($1,'x','needs_you',NULL,'verification_code')",
+        [binding.id, addresses.agent],
+      );
+      await d.query(
+        "INSERT INTO musecity.muse_signatures(id,binding_id,kind,line,signer,signature,state) VALUES('queued',$1,'elsewhere','stored line',$2,'0x','queued'),('expired',$1,'elsewhere','old line',$2,'0x','expired')",
+        [binding.id, addresses.alice],
+      );
+    });
+    f.controllers.get(6592)!.add(addresses.bob);
+    await check("fixture:bob");
+    await f.call("/me/muses/1/restart", { method: "POST" });
+    await check();
+    f.week.muses.push(1);
+    expect((await f.call("/me/muses/1")).data.needsYou.pot).toBeNull();
+  });
+
   it("projects stored reports, signatures and pot into the keeper's Needs you", async () => {
     const f = withMuses(fixture());
     const created = await start(f);

@@ -142,14 +142,65 @@ function browser(...args) {
   return result.data;
 }
 const evaluate = (code) => browser("eval", code).result;
-function ready(condition) {
+function ready(condition, timeout = 15000) {
   evaluate(
-    `(async()=>{const end=Date.now()+15000;while(!(${condition})){if(Date.now()>end)throw Error("Muse page did not become ready");await new Promise(r=>setTimeout(r,50));}return true})()`,
+    `(async()=>{const end=Date.now()+${timeout};while(!(${condition})){if(Date.now()>end)throw Error("Muse page did not become ready");await new Promise(r=>setTimeout(r,50));}return true})()`,
   );
 }
 function noErrors() {
   const errors = browser("errors");
   assert.ok(!errors.errors?.length, JSON.stringify(errors));
+}
+function actionFails(button, action, operation, code, copy) {
+  evaluate(`window.__museActionError=${JSON.stringify({ operation, code })}`);
+  browser("click", button);
+  if (operation === "signatures") {
+    ready('document.querySelector("dialog")');
+    browser("click", '[data-testid="approve-muse-signature"]');
+  }
+  ready(
+    `document.querySelector('[data-muse-action-error="${action}"]')?.textContent.includes(${JSON.stringify(copy)}) && !document.querySelector(${JSON.stringify(button)}).disabled`,
+  );
+  assert.equal(
+    evaluate(
+      `document.querySelector(${JSON.stringify(button)}).nextElementSibling?.dataset.museActionError`,
+    ),
+    action,
+    "the error is next to the action that failed",
+  );
+  assert.ok(
+    evaluate(
+      `document.querySelector('[data-muse-action-error="${action}"]').textContent.includes(${JSON.stringify(copy)})`,
+    ),
+  );
+  assert.equal(
+    evaluate('document.body.textContent.includes("INJECTED RAW ERROR")'),
+    false,
+  );
+}
+function pollCounts() {
+  return evaluate(
+    "({keeper:window.__museReads,public:window.__musePublicReads,feed:window.__museFeedReads})",
+  );
+}
+function idlePolling(reason) {
+  evaluate(`(async()=>{
+    const end=Date.now()+15000;
+    let snapshot=JSON.stringify([window.__museReads,window.__musePublicReads,window.__museFeedReads]);
+    let stable=Date.now();
+    while(Date.now()-stable<200||window.__museInFlight.keeper||window.__museInFlight.public||window.__museFeedInFlight){
+      if(Date.now()>end)throw Error('Muse reads did not settle');
+      await new Promise(r=>setTimeout(r,25));
+      const next=JSON.stringify([window.__museReads,window.__musePublicReads,window.__museFeedReads]);
+      if(next!==snapshot){snapshot=next;stable=Date.now()}
+    }
+    return true;
+  })()`);
+  const before = pollCounts();
+  evaluate(
+    "(async()=>{window.dispatchEvent(new Event('focus'));document.dispatchEvent(new Event('visibilitychange'));await new Promise(r=>setTimeout(r,5500));return true})()",
+  );
+  assert.deepEqual(pollCounts(), before, reason);
 }
 function settleLayout() {
   ready(
@@ -375,14 +426,11 @@ try {
     `(()=>{const read=window.fetch;window.fetch=(input,init)=>new URL(typeof input==='string'?input:input.url,location.href).pathname==='/api/v1/me/muses'?Promise.resolve(Response.json({error:{code:'LOCAL_MUSE_FAILURE',message:'Local muses unavailable.'}},{status:503})):read(input,init);return true})()`,
   );
   browser("click", 'a[href="/me/home"]');
-  ready(
-    'document.body.textContent.includes("Local muses unavailable.") && [...document.querySelectorAll("a")].some(a=>a.textContent.includes("Visit your public home"))',
-  );
+  ready('location.pathname==="/u/' + keeperFixture.handle + '"');
   assert.equal(
-    evaluate(
-      '[...document.querySelectorAll("a")].find(a=>a.textContent.includes("Visit your public home")).getAttribute("href")',
-    ),
-    "/u/" + keeperFixture.handle,
+    evaluate('document.body.textContent.includes("Local muses unavailable.")'),
+    false,
+    "a muse lookup failure redirects to the public home without showing the muses error",
   );
   browser("open", origin + "/");
   ready(
@@ -393,6 +441,28 @@ try {
   browser("open", origin + "/me/home");
   ready('location.pathname.startsWith("/u/")');
   assert.equal(evaluate('document.querySelector("#your-muses-heading")'), null);
+  browser("open", origin + "/muses/1");
+  ready(
+    'document.querySelector(".muse-keeper-refresh")?.textContent.includes("Recheck keeper wallet")',
+  );
+  assert.equal(
+    evaluate(
+      'document.querySelector(".muse-visitor-cta").textContent.includes("Sign in")',
+    ),
+    false,
+    "signed-in non-keepers are asked to link a wallet, not sign in",
+  );
+  assert.ok(
+    evaluate(
+      'document.querySelector(".muse-visitor-cta").textContent.includes("Link the wallet that holds it")',
+    ),
+  );
+  assert.equal(
+    evaluate(
+      'document.querySelector(".muse-visitor-cta a").getAttribute("href")',
+    ),
+    "/muses?filter=mine",
+  );
   evaluate("sessionStorage.setItem('musecity.fixture-user','alice')");
   await db.query("UPDATE musecity.accounts SET joined_at=NULL WHERE id=$1", [
     keeperFixture.accountId,
@@ -417,7 +487,10 @@ try {
   evaluate(
     `(()=>{
       window.__museCopies=[];window.__museStarts=0;window.__museReads=0;
+      window.__musePublicReads=0;window.__museFeedReads=0;window.__museConnectionStatus=null;
+      window.__museConnectionState=null;window.__museFeedInFlight=0;
       window.__museFail=false;window.__museDeny=false;window.__museLimit=false;
+      window.__museActionError=null;
       window.__museDelay=0;window.__museDelayError=false;
       window.__museInFlight={keeper:0,public:0};window.__museMaxInFlight={keeper:0,public:0};
       Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__museCopies.push(text)}}});
@@ -425,22 +498,34 @@ try {
       window.fetch=async(input,init)=>{
         const path=new URL(typeof input==='string'?input:input.url,location.href).pathname;
         const kind=path==='/api/v1/me/muses/1'?'keeper':path==='/api/v1/muses/1'?'public':null;
+        if(kind==='public')window.__musePublicReads++;
+        if(path==='/api/v1/feed'){window.__museFeedReads++;window.__museFeedInFlight++}
         const delay=kind?window.__museDelay:0;
-        if(delay){window.__museInFlight[kind]++;window.__museMaxInFlight[kind]=Math.max(window.__museMaxInFlight[kind],window.__museInFlight[kind]);await new Promise(resolve=>setTimeout(resolve,delay))}
+        if(kind){window.__museInFlight[kind]++;window.__museMaxInFlight[kind]=Math.max(window.__museMaxInFlight[kind],window.__museInFlight[kind])}
+        if(delay)await new Promise(resolve=>setTimeout(resolve,delay));
         try{
-          if(delay&&window.__museDelayError)return Response.json({error:{code:'LOCAL_DELAY_FAILURE',message:'Local delayed refresh unavailable.'}},{status:503});
+          if(delay&&window.__museDelayError&&kind==='public')return Response.json({error:{code:'LOCAL_DELAY_FAILURE',message:'Local delayed refresh unavailable.'}},{status:503});
           if(path==='/api/v1/me/muses/1'){
             window.__museReads++;
             if(window.__museFail)return Response.json({error:{code:'LOCAL_TEST_FAILURE',message:'Local keeper refresh unavailable.'}},{status:503});
             if(window.__museDeny)return Response.json({error:{code:'NOT_MUSE_KEEPER',message:'Not the keeper.'}},{status:403});
-            if(window.__museLimit){const response=await window.__museFetch(input,init);const data=await response.json();data.agentLimitReached=true;return Response.json(data,{status:response.status})}
+            if(window.__museLimit||window.__museConnectionStatus){const response=await window.__museFetch(input,init);const data=await response.json();if(window.__museLimit)data.agentLimitReached=true;if(window.__museConnectionStatus&&data.binding?.connection)data.binding.connection.status=window.__museConnectionStatus;window.__museConnectionState=data.binding?.connection?.status;return Response.json(data,{status:response.status})}
           }
+          if(init?.method==='POST'&&window.__museActionError&&path==='/api/v1/me/muses/1/'+window.__museActionError.operation)return Response.json({error:{code:window.__museActionError.code,message:'INJECTED RAW ERROR'}},{status:window.__museActionError.code==='NOT_MUSE_KEEPER'?403:409});
           if(path==='/api/v1/me/muses/1/start'&&init?.method==='POST')window.__museStarts++;
           return await window.__museFetch(input,init);
-        }finally{if(delay)window.__museInFlight[kind]--}
+        }finally{if(kind)window.__museInFlight[kind]--;if(path==='/api/v1/feed')window.__museFeedInFlight--}
       };return true
     })()`,
   );
+  assert.equal(
+    evaluate(
+      'document.querySelectorAll(".muse-needs [data-muse-sign]").length',
+    ),
+    0,
+    "an unstarted keeper has no signing action",
+  );
+  idlePolling("an unstarted keeper and public page do not poll");
   evaluate("window.__museLimit=true");
   browser("click", ".muse-keeper-refresh");
   ready(
@@ -456,6 +541,27 @@ try {
   evaluate("window.__museLimit=false");
   browser("click", ".muse-keeper-refresh");
   ready('document.querySelector(".muse-start [data-muse-copy=line]")');
+  const actionErrors = [
+    ["MUSE_KEPT_ELSEWHERE", "Bard is already set up by another account."],
+    [
+      "AGENT_LIMIT",
+      "Your account has 20 Agents. Remove one in My agents to wake Bard.",
+    ],
+    ["NOT_MUSE_KEEPER", "Holding Bard? Link the wallet that holds it"],
+    [
+      "LOCAL_ACTION_FAILURE",
+      "Can't update Bard's setup right now. Please try again.",
+    ],
+  ];
+  for (const [code, copy] of actionErrors)
+    actionFails('[data-muse-copy="line"]', "copy-line", "start", code, copy);
+  actionFails(
+    '[data-muse-copy="full"]',
+    "copy-full",
+    "start",
+    ...actionErrors[3],
+  );
+  evaluate("window.__museActionError=null");
   browser("click", ".muse-start [data-muse-copy=line]");
   ready("window.__museCopies.length===1");
   assert.ok(
@@ -484,6 +590,31 @@ try {
     1,
     "full setup reuses the same code",
   );
+  const waitingCounts = pollCounts();
+  evaluate(
+    "(async()=>{await new Promise(r=>setTimeout(r,5500));return true})()",
+  );
+  assert.ok(
+    pollCounts().keeper > waitingCounts.keeper,
+    "a live code polls for Bard",
+  );
+  assert.equal(
+    pollCounts().feed,
+    waitingCounts.feed,
+    "unchanged steps never reload the feed on a polling tick",
+  );
+  actionFails(
+    ".muse-start [data-muse-replace]",
+    "replace",
+    "start",
+    ...actionErrors[0],
+  );
+  idlePolling(
+    "a failed replacement stops all automatic reads even with a live code",
+  );
+  evaluate("window.__museActionError=null");
+  browser("click", '[data-muse-copy="line"]');
+  ready('!document.querySelector("[data-muse-action-error]")');
   const credential = await api(
     "/agent-connections",
     {
@@ -492,6 +623,17 @@ try {
     "",
   );
   const agentToken = credential.credential.token;
+  ready(
+    'document.querySelector(".muse-start").textContent.includes("waiting for your AI to verify")',
+  );
+  const verificationCounts = pollCounts();
+  evaluate(
+    "(async()=>{await new Promise(r=>setTimeout(r,5500));return true})()",
+  );
+  assert.ok(
+    pollCounts().keeper > verificationCounts.keeper,
+    "a redeemed code polls while Bard has not verified",
+  );
   await api("/agent", undefined, agentToken);
   await api(
     "/agent/muse/reports",
@@ -540,12 +682,30 @@ try {
     { kind: "update", text: "Task 12 synthetic Bard hello after connection." },
     agentToken,
   );
+  browser("click", ".muse-keeper-refresh");
   ready(
     'document.querySelector(".muse-posts").textContent.includes("Task 12 synthetic Bard hello after connection.")',
   );
   ready(
     'document.querySelector(".muse-posts button[aria-label=Like]") && !document.querySelector(".muse-posts button[aria-label=Like]").disabled',
   );
+  for (const [code, copy] of actionErrors)
+    actionFails(
+      ".muse-start button[data-muse-restart]",
+      "restart",
+      "restart",
+      code,
+      copy,
+    );
+  for (const [code, copy] of actionErrors)
+    actionFails(
+      '[data-muse-sign="places"]',
+      "places",
+      "signatures",
+      code,
+      copy,
+    );
+  evaluate("window.__museActionError=null");
   browser("click", '.muse-posts button[aria-label="Like"]');
   ready(
     'document.querySelector(".muse-posts button[aria-label=Like]").getAttribute("aria-pressed")==="true"',
@@ -575,6 +735,7 @@ try {
     true,
   );
   evaluate("window.__museFail=true");
+  browser("click", ".muse-keeper-refresh");
   ready(
     'document.querySelector(".muse-keeper-error")?.textContent.includes("Local keeper refresh unavailable.")',
   );
@@ -618,6 +779,21 @@ try {
     "the twentieth connected Agent retains its connected state",
   );
   evaluate("window.__museLimit=false");
+  idlePolling("a connected binding stops automatic reads");
+  for (const status of ["expired", "cancelled", "paused", "revoked"]) {
+    const before = pollCounts().keeper;
+    evaluate(`window.__museConnectionStatus=${JSON.stringify(status)}`);
+    browser("click", ".muse-keeper-refresh");
+    ready(
+      `window.__museReads>${before} && window.__museConnectionState===${JSON.stringify(status)}`,
+    );
+    idlePolling(status + " connections do not poll");
+  }
+  evaluate('window.__museConnectionStatus="awaiting_verification"');
+  browser("click", ".muse-keeper-refresh");
+  ready(
+    'document.querySelector(".muse-start").textContent.includes("waiting for your AI to verify")',
+  );
   evaluate(
     "window.__museDelay=6000;window.__museMaxInFlight={keeper:0,public:0}",
   );
@@ -631,8 +807,14 @@ try {
     { kind: "update", text: "Task 12 slow background refresh appeared." },
     agentToken,
   );
+  await api(
+    "/agent/muse/reports",
+    { step: "look", status: "done" },
+    agentToken,
+  );
   ready(
     'document.querySelector(".muse-needs").textContent.includes("Answer Muse\'s question") && document.querySelector(".muse-posts").textContent.includes("Task 12 slow background refresh appeared.")',
+    25000,
   );
   assert.deepEqual(
     evaluate("window.__museMaxInFlight"),
@@ -642,6 +824,7 @@ try {
   evaluate("window.__museDelayError=true");
   ready(
     'document.querySelector(".muse-keeper-error")?.textContent.includes("Local delayed refresh unavailable.") && document.querySelector(".muse-public-error")?.textContent.includes("Local delayed refresh unavailable.")',
+    25000,
   );
   evaluate("window.__museDelay=0;window.__museDelayError=false");
   browser("click", ".muse-keeper-refresh");

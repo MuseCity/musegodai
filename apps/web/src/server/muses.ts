@@ -426,7 +426,8 @@ export async function keeperMuse(
     needsYou: needsYou({
       id: tokenId,
       origin: deps.origin,
-      worlds: record.worlds,
+      // Setup confirmations belong only to this account's active binding.
+      worlds: binding ? record.worlds : null,
       terrakinBadge,
       reports,
       signatures,

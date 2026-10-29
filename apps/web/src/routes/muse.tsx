@@ -93,6 +93,7 @@ function MuseContent({
   const api = useApi();
   const [view, setView] = useState(initial.view);
   const [posts, setPosts] = useState(initial.posts);
+  const currentView = useRef(initial.view);
   const [error, setError] = useState("");
   const alive = useRef(true);
   const reads = useRef(0);
@@ -113,8 +114,17 @@ function MuseContent({
         const next = await request<MuseView>(
           `/api/v1/muses/${initial.view.muse.id}`,
         );
-        let nextPosts: Page<CommunityItem> = { items: [], nextCursor: null };
-        if (next.agent) {
+        if (!alive.current || version !== reads.current) return;
+        const previous = currentView.current;
+        const refreshPosts =
+          !background ||
+          next.agent?.id !== previous.agent?.id ||
+          next.agent?.ownerHandle !== previous.agent?.ownerHandle ||
+          JSON.stringify(next.steps) !== JSON.stringify(previous.steps);
+        let nextPosts: Page<CommunityItem> | null = refreshPosts
+          ? { items: [], nextCursor: null }
+          : null;
+        if (refreshPosts && next.agent) {
           try {
             nextPosts = session.userId
               ? await api<Page<CommunityItem>>(postsPath(next.agent))
@@ -127,11 +137,15 @@ function MuseContent({
           }
         }
         if (!alive.current || version !== reads.current) return;
+        currentView.current = next;
         setView(next);
-        setPosts(nextPosts);
+        if (nextPosts) setPosts(nextPosts);
         setError("");
       } catch (cause) {
-        if (alive.current && version === reads.current) throw cause;
+        if (alive.current && version === reads.current) {
+          setError(errorMessage(cause));
+          throw cause;
+        }
       } finally {
         fetching.current--;
       }
@@ -145,16 +159,6 @@ function MuseContent({
       });
   }, [session.ready, refresh]);
   useEffect(() => {
-    if (error) return;
-    const check = () => {
-      if (document.visibilityState === "visible")
-        void refresh(true).catch((cause) => {
-          if (alive.current) setError(errorMessage(cause));
-        });
-    };
-    const timer = window.setInterval(check, 5000);
-    window.addEventListener("focus", check);
-    document.addEventListener("visibilitychange", check);
     const changed = () => {
       if (document.visibilityState === "visible")
         void refresh().catch((cause) => {
@@ -163,12 +167,9 @@ function MuseContent({
     };
     window.addEventListener("neighborhood-change", changed);
     return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", check);
-      document.removeEventListener("visibilitychange", check);
       window.removeEventListener("neighborhood-change", changed);
     };
-  }, [error, refresh]);
+  }, [refresh]);
   const { muse } = view;
   return (
     <div className="muse-page">
@@ -237,8 +238,17 @@ function MuseContent({
           <section className="muse-panel muse-visitor-cta">
             <h2>Hold a muse?</h2>
             <p className="muse-note">
-              Sign in with the wallet that holds it and your Muse can set it up
-              in a few minutes.
+              {session.userId ? (
+                <button
+                  type="button"
+                  className="text-link"
+                  onClick={() => session.link("wallet")}
+                >
+                  Link the wallet that holds it
+                </button>
+              ) : (
+                "Sign in with the wallet that holds it and your Muse can set it up in a few minutes."
+              )}
             </p>
             <Link className="primary" to="/muses?filter=mine">
               Find my muses

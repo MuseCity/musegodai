@@ -16,13 +16,13 @@ function MyHome() {
     muses = useNeighborhoodData<DirectoryItem[]>("/me/muses", undefined, true),
     navigate = useNavigate();
   useEffect(() => {
-    if (me.data && muses.data?.length === 0)
+    if (me.data && !muses.busy && (muses.error || !muses.data?.length))
       void navigate("/u/" + me.data.handle, { replace: true });
-  }, [me.data, muses.data, navigate]);
+  }, [me.data, muses.busy, muses.data, muses.error, navigate]);
   return (
     <>
       <QueryState busy={me.busy} error={me.error} retry={me.reload} />
-      <QueryState busy={muses.busy} error={muses.error} retry={muses.reload} />
+      <QueryState busy={muses.busy} error="" retry={muses.reload} />
       {me.data && (
         <>
           <div className="page-top">
