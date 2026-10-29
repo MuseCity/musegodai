@@ -253,11 +253,9 @@ export function musegodOrg(opts: {
       // A missing, evicted or unusable cache entry is not remote evidence.
     }
 
-    let retryable = false;
     try {
       return await request(target, {}, async (response) => {
         if (!response.ok) {
-          retryable = response.status >= 500;
           await response.body?.cancel();
           throw unavailable();
         }
@@ -288,9 +286,8 @@ export function musegodOrg(opts: {
         }
         return { value: parsed.data, asOf, stale: false };
       });
-    } catch (error) {
-      if (snapshot && (retryable || !(error instanceof ApiError)))
-        return { ...snapshot, stale: true };
+    } catch {
+      if (snapshot) return { ...snapshot, stale: true };
       throw unavailable();
     }
   }
@@ -335,18 +332,18 @@ export function musegodOrg(opts: {
       );
     },
     async catalog() {
-      const pages: Fetched<z.infer<typeof catalogPage>>[] = [];
-      for (let offset = 0; offset < museCount; offset += 100) {
-        pages.push(
-          await read(
+      const pages = await Promise.all(
+        Array.from({ length: Math.ceil(museCount / 100) }, (_, index) => {
+          const offset = index * 100;
+          return read(
             `https://musegod.org/api/v1/muses?limit=100&offset=${offset}`,
             catalogPage.refine(
               (page) => page.muses.length === Math.min(100, museCount - offset),
             ),
             360 * minute,
-          ),
-        );
-      }
+          );
+        }),
+      );
       const value = pages.flatMap((page) => page.value.muses);
       if (new Set(value.map((entry) => entry.id)).size !== museCount)
         throw unavailable();

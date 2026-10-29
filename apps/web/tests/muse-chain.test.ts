@@ -135,16 +135,26 @@ describe("Robinhood muse chain reads", () => {
     expect(requests.filter((r) => r.method === "eth_chainId")).toHaveLength(2);
   });
 
-  it("rejects malformed or non-HTTPS configuration before sending a request", () => {
+  it("constructs with malformed or non-HTTPS configuration but rejects each read without fetching", async () => {
     const requests = rpcMock(() => "0x1237");
     for (const endpoint of [
       "http://rpc.example.test",
       "ws://rpc.example.test",
       "invalid",
-    ])
-      expect(() => robinhoodMuseChain(endpoint)).toThrowError(
-        expect.objectContaining({ status: 503, code: "RPC_UNAVAILABLE" }),
-      );
+    ]) {
+      let chain!: ReturnType<typeof robinhoodMuseChain>;
+      expect(() => (chain = robinhoodMuseChain(endpoint))).not.toThrow();
+      for (const read of [
+        () => chain.ownerOf(1),
+        () => chain.isController(6592, owner),
+        () => chain.bindingOf(6592),
+        () => chain.verifyMessage(owner, "Bard", "0x1234"),
+      ])
+        await expect(read()).rejects.toMatchObject({
+          status: 503,
+          code: "RPC_UNAVAILABLE",
+        });
+    }
     expect(requests).toHaveLength(0);
   });
 
@@ -215,6 +225,81 @@ describe("Robinhood muse chain reads", () => {
 });
 
 describe("muse message verification", () => {
+  it.each([3, -32000])(
+    "returns false when the signature verifier reverts with RPC code %s",
+    async (code) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = JSON.parse(
+            String(input instanceof Request ? await input.text() : init?.body),
+          );
+          return Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            ...(request.method === "eth_chainId"
+              ? { result: "0x1237" }
+              : {
+                  error: {
+                    code,
+                    message: "execution reverted: invalid signature",
+                  },
+                }),
+          });
+        }),
+      );
+      expect(
+        await robinhoodMuseChain().verifyMessage(owner, "Bard", "0x1234"),
+      ).toBe(false);
+    },
+  );
+
+  it.each(["0x", "0x1", "0xzz"] as const)(
+    "returns false for malformed signature %s rather than an availability error",
+    async (signature) => {
+      rpcMock((r) => (r.method === "eth_chainId" ? "0x1237" : "0x0"));
+      expect(
+        await robinhoodMuseChain().verifyMessage(owner, "Bard", signature),
+      ).toBe(false);
+    },
+  );
+
+  it.each(["network", "http", "rpc", "timeout"])(
+    "reports %s failures during signature verification as RPC_UNAVAILABLE",
+    async (failure) => {
+      const { TimeoutError } = await import("viem");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = JSON.parse(
+            String(input instanceof Request ? await input.text() : init?.body),
+          );
+          if (request.method === "eth_chainId")
+            return Response.json({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: "0x1237",
+            });
+          if (failure === "network") throw new TypeError("offline");
+          if (failure === "timeout")
+            throw new TimeoutError({
+              body: {},
+              url: "https://rpc.example.test",
+            });
+          if (failure === "http") return new Response(null, { status: 503 });
+          return Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { code: -32603, message: "unavailable" },
+          });
+        }),
+      );
+      await expect(
+        robinhoodMuseChain().verifyMessage(owner, "Bard", "0x1234"),
+      ).rejects.toMatchObject({ status: 503, code: "RPC_UNAVAILABLE" });
+    },
+  );
+
   it("accepts a real EIP-191 signature and rejects a tampered message", async () => {
     rpcMock((r) => (r.method === "eth_chainId" ? "0x1237" : "0x0"));
     const account = privateKeyToAccount(generatePrivateKey());

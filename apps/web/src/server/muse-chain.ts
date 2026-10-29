@@ -3,6 +3,11 @@ import {
   erc721Abi,
   http,
   parseAbi,
+  BaseError,
+  HttpRequestError,
+  RpcRequestError,
+  TimeoutError,
+  ExecutionRevertedError,
   type Address,
 } from "viem";
 import { robinhood } from "../shared/chains";
@@ -41,24 +46,34 @@ function unavailable() {
 
 export function robinhoodMuseChain(rpcUrl?: string): MuseChain {
   const endpoint = rpcUrl || robinhood.rpcUrls.default.http[0];
-  try {
-    if (new URL(endpoint).protocol !== "https:") throw unavailable();
-  } catch {
-    throw unavailable();
-  }
   // Keep the client instance request-scoped. Never combine I/O belonging to
   // different Cloudflare Worker request contexts in a shared batch scheduler.
-  const client = createPublicClient({
-    chain: robinhood,
-    batch: { multicall: false },
-    transport: http(endpoint, { batch: false, timeout: 8_000, retryCount: 0 }),
-  });
+  const makeClient = (onError?: (error: unknown) => void) =>
+    createPublicClient({
+      chain: robinhood,
+      batch: { multicall: false },
+      transport: (options) => {
+        const transport = http(endpoint, {
+          batch: false,
+          timeout: 8_000,
+          retryCount: 0,
+        })(options);
+        const request = ((...args: Parameters<typeof transport.request>) =>
+          transport.request(...args).catch((error: unknown) => {
+            onError?.(error);
+            throw error;
+          })) as typeof transport.request;
+        return { ...transport, request };
+      },
+    });
+  const client = makeClient();
   let chainChecked: Promise<void> | undefined;
   const owners = new Map<number, Cached<string>>();
   const controllers = new Map<string, Cached<boolean>>();
 
   async function read<T>(operation: () => Promise<T>): Promise<T> {
     try {
+      if (new URL(endpoint).protocol !== "https:") throw unavailable();
       chainChecked ??= client.getChainId().then((chainId) => {
         requireValue(
           chainId === robinhood.id,
@@ -126,12 +141,38 @@ export function robinhoodMuseChain(rpcUrl?: string): MuseChain {
         return { standard, contract: contract.toLowerCase(), tokenId };
       }),
     verifyMessage: (address, message, signature) =>
-      read(() =>
-        client.verifyMessage({
-          address: address as Address,
-          message,
-          signature,
-        }),
-      ),
+      read(async () => {
+        // viem can catch call failures while trying EOA recovery. Observe the
+        // transport per verification so an outage cannot become "invalid".
+        let rpcFailed = false;
+        const verifier = makeClient((error) => {
+          if (
+            error instanceof BaseError &&
+            error.walk(
+              (cause) =>
+                cause instanceof HttpRequestError ||
+                cause instanceof TimeoutError ||
+                (cause instanceof RpcRequestError &&
+                  cause.code !== ExecutionRevertedError.code &&
+                  !ExecutionRevertedError.nodeMessage.test(
+                    cause.details.toLowerCase(),
+                  )),
+            ) instanceof BaseError
+          )
+            rpcFailed = true;
+        });
+        let valid = false;
+        try {
+          valid = await verifier.verifyMessage({
+            address: address as Address,
+            message,
+            signature,
+          });
+        } catch {
+          // Malformed and non-matching signatures are ordinary invalid proofs.
+        }
+        if (rpcFailed) throw unavailable();
+        return valid;
+      }),
   };
 }

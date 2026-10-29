@@ -327,14 +327,44 @@ describe("Musegod public client", () => {
     );
   });
 
-  it("does not hide a 404 behind a stale snapshot", async () => {
-    const h = harness();
-    await h.client.muse(1);
-    h.advance(300_001);
-    h.fetch.mockResolvedValueOnce(
-      Response.json({ error: { message: "not public" } }, { status: 404 }),
-    );
-    await expect(h.client.muse(1)).rejects.toMatchObject(unavailable);
+  it.each(["404", "429", "invalid_json", "invalid_schema"])(
+    "serves a stale snapshot when refresh fails with %s",
+    async (failure) => {
+      const h = harness();
+      const first = await h.client.muse(1);
+      h.advance(300_001);
+      h.fetch.mockResolvedValueOnce(
+        failure === "invalid_json"
+          ? new Response("malformed")
+          : failure === "invalid_schema"
+            ? Response.json({ ...museWire(), soul: { intro: 3 } })
+            : Response.json(
+                { error: { message: "not public" } },
+                { status: Number(failure) },
+              ),
+      );
+      expect(await h.client.muse(1)).toEqual({ ...first, stale: true });
+    },
+  );
+
+  it("starts all ten catalog page reads before any page completes", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetch = fakeFetch(async (url) => {
+      await gate;
+      return Response.json(catalogWire(Number(url.searchParams.get("offset"))));
+    });
+    const pending = musegodOrg({ fetch }).catalog();
+    try {
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(10), {
+        timeout: 100,
+      });
+    } finally {
+      release();
+      expect((await pending).value).toHaveLength(999);
+    }
   });
 
   it("catalog pages to 999 with limit 100 and caches each page for six hours", async () => {
