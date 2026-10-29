@@ -96,6 +96,7 @@ const listener = getRequestListener(async (request) => {
     path.startsWith("/.well-known/") ||
     path.startsWith("/media/") ||
     path.startsWith("/sitemaps/") ||
+    /^\/muses\/[1-9]\d*\/start\.md$/.test(path) ||
     [
       "/skill.md",
       "/openapi.json",

@@ -98,6 +98,10 @@ async function harness(
       login: () => {},
       logout: async () => {},
       token: async () => userId,
+      evmAddresses: [],
+      signMessage: async () => {
+        throw new Error("No wallet in this cache fixture.");
+      },
       retryWallet: async () => {},
       link: () => {},
       linked: [],

@@ -15,6 +15,8 @@ export type Session = {
   logout: () => Promise<void>;
   token: () => Promise<string | null>;
   walletAddress?: string;
+  evmAddresses: string[];
+  signMessage: (address: string, message: string) => Promise<string>;
   wallet?: WalletSession;
   walletsReady?: boolean;
   retryWallet: () => Promise<void>;
@@ -28,6 +30,10 @@ const anonymous: Session = {
   login: () => {},
   logout: async () => {},
   token: async () => null,
+  evmAddresses: [],
+  signMessage: async () => {
+    throw new Error("Connect the wallet that holds this muse.");
+  },
   retryWallet: async () => {},
   link: () => {},
   linked: [],

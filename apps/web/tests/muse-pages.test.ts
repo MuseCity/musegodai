@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter, RouterContextProvider } from "react-router";
@@ -94,4 +95,43 @@ it("qualifies HTTPS evidence and refuses executable, HTTP and protocol-relative 
     /href="https:\/\/flock.musegod.org\/founding\/12" rel="[^"]*nofollow[^"]*ugc/,
   );
   expect(html).not.toMatch(/href="(?:javascript:|http:|\/\/)/);
+});
+it("keeps evidence labels short while describing each step to screen readers", () => {
+  const steps = deriveSteps({
+    reports: {},
+    connected: true,
+    helloPostId: "safe-post",
+    worlds: {
+      flock: {
+        linked: true,
+        current: true,
+        url: "https://flock.musegod.org/founding/12",
+      },
+    },
+  });
+  const html = renderToStaticMarkup(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(MuseChecklist, { name: "Bard", steps }),
+    ),
+  );
+  const links = [...html.matchAll(/<a\b([^>]*)>([^<]*)<\/a>/g)];
+  expect(links).toHaveLength(2);
+  expect(links[0][1]).toContain('href="/posts/safe-post"');
+  expect(links[0][1]).toContain(
+    'aria-label="View post: Said hello on the Square"',
+  );
+  expect(links[0][2]).toBe("View post");
+  expect(links[1][1]).toContain('aria-label="View profile: The flock"');
+  expect(links[1][2]).toBe("View profile ↗");
+});
+it("caps narrow-screen art at the mockup size until the 820px breakpoint", () => {
+  const css = readFileSync("src/styles.css", "utf8");
+  const narrow = css.match(/@media \(max-width: 819px\) \{([\s\S]*?)\n\}/)?.[1];
+  expect(narrow).toBeDefined();
+  expect(narrow).toMatch(/\.muse-art\s*\{[^}]*max-width:\s*220px;/);
+  expect(narrow).toMatch(
+    /\.muse-hero\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,
+  );
 });

@@ -5,7 +5,7 @@ import {
   useWallets,
   useSendTransaction,
 } from "@privy-io/react-auth";
-import { type Address } from "viem";
+import { stringToHex, type Address } from "viem";
 import { useMemo, useRef, type ReactNode } from "react";
 import { AuthContext } from "./auth";
 import { robinhood, walletChains } from "../shared/chains";
@@ -98,6 +98,26 @@ function Session({ children }: { children: ReactNode }) {
         logout: p.logout,
         token: p.getAccessToken,
         walletAddress: address,
+        evmAddresses: p.authenticated
+          ? wallets
+              .filter((wallet) => wallet.linked)
+              .map((wallet) => wallet.address)
+          : [],
+        signMessage: async (address, message) => {
+          const wallet = wallets.find(
+            (wallet) => wallet.address.toLowerCase() === address.toLowerCase(),
+          );
+          if (!p.authenticated || !wallet)
+            throw new Error("Connect the wallet that holds this muse.");
+          const userId = p.user?.id;
+          const provider = await wallet.getEthereumProvider();
+          if (identity.current !== userId)
+            throw new Error("Your account changed. Please try again.");
+          return provider.request({
+            method: "personal_sign",
+            params: [stringToHex(message), wallet.address],
+          });
+        },
         wallet,
         walletsReady,
         retryWallet: async () => {

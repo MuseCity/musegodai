@@ -240,16 +240,21 @@ export function MuseChecklist({
                         <>
                           {" · "}
                           {href.startsWith("/") ? (
-                            <Link className="text-link" to={href}>
-                              View {text.label.toLowerCase()} evidence
+                            <Link
+                              className="text-link"
+                              to={href}
+                              aria-label={`View post: ${text.label}`}
+                            >
+                              View post
                             </Link>
                           ) : (
                             <a
                               className="text-link"
                               href={href}
                               rel="nofollow ugc noopener noreferrer"
+                              aria-label={`View profile: ${text.label}`}
                             >
-                              View {text.label.toLowerCase()} evidence ↗
+                              View profile ↗
                             </a>
                           )}
                         </>

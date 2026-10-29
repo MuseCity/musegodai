@@ -1,5 +1,6 @@
 // Synthetic local-only upstreams. Production entry points never import this file.
 import { readFileSync } from "node:fs";
+import { stringToHex } from "viem";
 import { assertLocalTarget } from "../scripts/local-target";
 import { withDatabase } from "../src/server/database";
 import type { MuseChain } from "../src/server/muse-chain";
@@ -52,7 +53,7 @@ const records = new Map<number, MuseRecord>(
                 url: "https://musebook.me/bard",
               },
               terrakin: {
-                linked: true,
+                linked: false,
                 current: true,
                 url: "https://terrakin.org/r/r_0123456789abcdef",
               },
@@ -127,8 +128,12 @@ export const fixtureMuseChain: MuseChain = {
   async bindingOf(id) {
     return { standard: 0, contract: museContract, tokenId: id - 6591 };
   },
-  async verifyMessage() {
-    return false;
+  async verifyMessage(address, message, signature) {
+    return (
+      address.toLowerCase() === owner &&
+      signature ===
+        stringToHex(`local-muse-signature:${address.toLowerCase()}:${message}`)
+    );
   },
 };
 

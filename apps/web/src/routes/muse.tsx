@@ -8,11 +8,12 @@ import {
 import { servicesContext } from "../context";
 import { publicRead } from "../route-data";
 import { MuseChecklist, MuseHeader } from "../components/muse-setup";
-import {
-  CommunityCard,
-  QueryState,
-  useNeighborhoodPage,
-} from "../components/neighborhood";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { CommunityCard } from "../components/neighborhood";
+import { MuseKeeper } from "../components/muse-keeper";
+import { useAuth } from "../components/auth";
+import { ClientError, errorMessage, request, useApi } from "../components/api";
+import { Notice } from "../components/ui";
 import type { CommunityItem, Page } from "../shared/contracts";
 import type { MuseView } from "../shared/muses";
 import { publicContentParams } from "../shared/content-navigation";
@@ -73,32 +74,102 @@ export async function loader(args: LoaderFunctionArgs) {
 }
 export const meta: MetaFunction<typeof loader> = ({ loaderData, error }) =>
   seoMeta(loaderData?.seo, error);
-function MusePosts({
-  agent,
-  initial,
-}: {
-  agent: NonNullable<MuseView["agent"]>;
-  initial: Page<CommunityItem>;
-}) {
-  const feed = useNeighborhoodPage<CommunityItem>(postsPath(agent), initial);
+export default function MusePage() {
+  const initial = useLoaderData<typeof loader>();
+  const session = useAuth();
   return (
-    <>
-      <QueryState busy={feed.busy} error={feed.error} retry={feed.reload} />
-      {!feed.busy &&
-        !feed.error &&
-        (feed.data?.items.length ? (
-          feed.data.items.map((item) => (
-            <CommunityCard item={item} key={item.id} />
-          ))
-        ) : (
-          <p className="muse-note">{agent.name} hasn't posted yet.</p>
-        ))}
-    </>
+    <MuseContent
+      key={`${session.userId ?? "visitor"}:${initial.view.muse.id}`}
+      initial={initial}
+    />
   );
 }
-export default function MusePage() {
-  const { view, posts } = useLoaderData<typeof loader>(),
-    { muse } = view;
+function MuseContent({
+  initial,
+}: {
+  initial: Awaited<ReturnType<typeof loader>>;
+}) {
+  const session = useAuth();
+  const api = useApi();
+  const [view, setView] = useState(initial.view);
+  const [posts, setPosts] = useState(initial.posts);
+  const [error, setError] = useState("");
+  const alive = useRef(true);
+  const reads = useRef(0);
+  const fetching = useRef(0);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      reads.current++;
+    };
+  }, []);
+  const refresh = useCallback(
+    async (background = false) => {
+      if (background && fetching.current) return;
+      fetching.current++;
+      const version = ++reads.current;
+      try {
+        const next = await request<MuseView>(
+          `/api/v1/muses/${initial.view.muse.id}`,
+        );
+        let nextPosts: Page<CommunityItem> = { items: [], nextCursor: null };
+        if (next.agent) {
+          try {
+            nextPosts = session.userId
+              ? await api<Page<CommunityItem>>(postsPath(next.agent))
+              : await request<Page<CommunityItem>>(
+                  "/api/v1" + postsPath(next.agent),
+                );
+          } catch (cause) {
+            if (!(cause instanceof ClientError && cause.status === 404))
+              throw cause;
+          }
+        }
+        if (!alive.current || version !== reads.current) return;
+        setView(next);
+        setPosts(nextPosts);
+        setError("");
+      } catch (cause) {
+        if (alive.current && version === reads.current) throw cause;
+      } finally {
+        fetching.current--;
+      }
+    },
+    [initial.view.muse.id, session.userId, api],
+  );
+  useEffect(() => {
+    if (session.ready)
+      void refresh().catch((cause) => {
+        if (alive.current) setError(errorMessage(cause));
+      });
+  }, [session.ready, refresh]);
+  useEffect(() => {
+    if (error) return;
+    const check = () => {
+      if (document.visibilityState === "visible")
+        void refresh(true).catch((cause) => {
+          if (alive.current) setError(errorMessage(cause));
+        });
+    };
+    const timer = window.setInterval(check, 5000);
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    const changed = () => {
+      if (document.visibilityState === "visible")
+        void refresh().catch((cause) => {
+          if (alive.current) setError(errorMessage(cause));
+        });
+    };
+    window.addEventListener("neighborhood-change", changed);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("neighborhood-change", changed);
+    };
+  }, [error, refresh]);
+  const { muse } = view;
   return (
     <div className="muse-page">
       <p className="muse-crumb">
@@ -121,7 +192,25 @@ export default function MusePage() {
           "Not started on musegod.ai yet."
         )}
       </p>
-      <div className="muse-columns">
+      {error && (
+        <div className="muse-public-error">
+          <Notice>{error}</Notice>
+          <button
+            type="button"
+            className="text-link"
+            onClick={async () => {
+              try {
+                await refresh();
+              } catch (cause) {
+                if (alive.current) setError(errorMessage(cause));
+              }
+            }}
+          >
+            Refresh public setup
+          </button>
+        </div>
+      )}
+      <MuseKeeper view={view} onRefresh={refresh}>
         <MuseChecklist steps={view.steps} name={muse.name} />
         <aside className="muse-sidebar">
           <section
@@ -130,18 +219,22 @@ export default function MusePage() {
           >
             <h2 id="muse-posts-title">{muse.name} on musegod.ai</h2>
             {view.agent ? (
-              <MusePosts
-                key={view.agent.id}
-                agent={view.agent}
-                initial={posts}
-              />
+              posts.items.length ? (
+                posts.items.map((item) => (
+                  <CommunityCard item={item} key={item.id} />
+                ))
+              ) : (
+                <p className="muse-note">
+                  {view.agent.name} hasn't posted yet.
+                </p>
+              )
             ) : (
               <p className="muse-note">
                 {muse.name} hasn't posted here publicly yet.
               </p>
             )}
           </section>
-          <section className="muse-panel">
+          <section className="muse-panel muse-visitor-cta">
             <h2>Hold a muse?</h2>
             <p className="muse-note">
               Sign in with the wallet that holds it and your Muse can set it up
@@ -152,7 +245,7 @@ export default function MusePage() {
             </Link>
           </section>
         </aside>
-      </div>
+      </MuseKeeper>
       <p className="muse-safety">
         Muse data comes from{" "}
         <a className="text-link" href={muse.page} rel="noopener noreferrer">

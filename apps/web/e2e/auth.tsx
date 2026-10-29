@@ -11,6 +11,7 @@ import { AuthContext } from "../src/components/auth";
 import { Dialog } from "../src/components/ui";
 import type { Transfer } from "../src/shared/wallet";
 import { fixtureWallet, defaultScenario, type WalletScenario } from "./wallet";
+import { stringToHex } from "viem";
 export function AuthProvider({
   children,
 }: {
@@ -22,6 +23,14 @@ export function AuthProvider({
   const [scenario, setScenario] = useState<WalletScenario>(defaultScenario);
   const scenarioRef = useRef(defaultScenario);
   const [approval, setApproval] = useState<Transfer | null>(null);
+  const [museSignature, setMuseSignature] = useState<{
+    address: string;
+    message: string;
+  } | null>(null);
+  const pendingSignature = useRef<{
+    resolve: (signature: string) => void;
+    reject: (error: Error) => void;
+  } | null>(null);
   const pending = useRef<{
     resolve: () => void;
     reject: (error: Error) => void;
@@ -85,6 +94,11 @@ export function AuthProvider({
     else request?.reject(new Error("User rejected request"));
   }
   function change(value: string | null) {
+    pendingSignature.current?.reject(
+      new Error("Your account changed. Please try again."),
+    );
+    pendingSignature.current = null;
+    setMuseSignature(null);
     setUser(value);
     if (value) sessionStorage.setItem("musecity.fixture-user", value);
     else sessionStorage.removeItem("musecity.fixture-user");
@@ -100,6 +114,18 @@ export function AuthProvider({
         wallet: scenario.connection === "ready" ? wallet : undefined,
         walletAddress:
           scenario.connection === "missing" ? undefined : wallet?.address,
+        evmAddresses: wallet ? [wallet.address] : [],
+        signMessage: async (address, message) => {
+          if (
+            scenario.connection !== "ready" ||
+            address.toLowerCase() !== wallet?.address.toLowerCase()
+          )
+            throw new Error("Connect the wallet that holds this muse.");
+          return new Promise<string>((resolve, reject) => {
+            pendingSignature.current = { resolve, reject };
+            setMuseSignature({ address, message });
+          });
+        },
         walletsReady: ready && scenario.connection !== "preparing",
         retryWallet: async () => {
           update({ connection: "ready" });
@@ -198,6 +224,36 @@ export function AuthProvider({
         </div>
       </details>
       {children}
+      {museSignature && (
+        <Dialog
+          title="Local muse signature"
+          onClose={() => {
+            pendingSignature.current?.reject(
+              new Error("User rejected request"),
+            );
+            pendingSignature.current = null;
+            setMuseSignature(null);
+          }}
+        >
+          <p>SIMULATION ONLY · No real wallet signature.</p>
+          <p className="wallet-wrap">{museSignature.message}</p>
+          <button
+            className="primary"
+            data-testid="approve-muse-signature"
+            onClick={() => {
+              pendingSignature.current?.resolve(
+                stringToHex(
+                  `local-muse-signature:${museSignature.address.toLowerCase()}:${museSignature.message}`,
+                ),
+              );
+              pendingSignature.current = null;
+              setMuseSignature(null);
+            }}
+          >
+            Approve simulated signature
+          </button>
+        </Dialog>
+      )}
       {approval && (
         <Dialog title="Local wallet confirmation" onClose={() => finish(false)}>
           <p>SIMULATION ONLY · No real funds or signatures.</p>
