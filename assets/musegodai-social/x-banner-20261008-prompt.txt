@@ -1,0 +1,23 @@
+Generation tool: OpenAI built-in image_gen
+
+Initial generation prompt:
+Use case: ads-marketing
+Asset type: a finished X / Twitter profile header banner for musegod.ai.
+Primary request: create one new, polished brand banner announcing the new musegod.ai identity. Exact ultrawide 3:1 composition, ideally 1500 x 500 pixels.
+Scene/backdrop: rich deep wine-red (#9F1D2D, shaded to dark burgundy) with a restrained warm-gold atmospheric glow, faint elegant gold city silhouettes near the far right, one sweeping subtle celestial gold arc, generous clean negative space.
+Subject: on the right, a friendly ivory plush little deity mascot: short rounded fluffy body, round cream face framed by an ivory fur hood, two glossy black button eyes, tiny curved smile and subtle pink cheeks. Wear a shiny pointed gold crown with a central diamond gem and delicate laurel trim, a thin elliptical golden halo floating above it, and an ivory cape fastened with a small round gold four-point-star brooch. Hold a slender gold scepter topped by a glowing orb in orbital gold rings in its image-left hand. Soft, tactile, high-end 3D plush rendering, exquisite gold reflections, welcoming expression. Fully retain the halo, crown, face, brooch and orb within the canvas. This should feel like the existing white-and-gold musegod.ai mascot, not a human or a humanoid robot.
+Composition/framing: one ultrawide banner, edge-to-edge artwork, no mockup or outer frame. Put the mascot in the right third, around 78% of canvas width, with balanced small margins. Put the wordmark large and beautifully kerned across the center-left in a modern rounded sans-serif similar to Manrope. Keep all essential elements in the central 70% of the image height, with clear margins for responsive cropping. Leave the lower-left area (roughly the leftmost 25% width and lower 40% height) quiet and without essential elements, because the X profile avatar can overlap it. Typography and mascot must remain legible at small profile-header scale.
+Lighting/mood: warm cinematic soft lighting, tactile ivory fluff, understated premium finish, joyful and welcoming.
+Color palette: burgundy / wine red, warm gold #D5A137, ivory #FFF9EF.
+Text (verbatim): "musegod.ai". All lowercase, spelled m-u-s-e-g-o-d-dot-a-i. Render it exactly once. Color "muse" ivory and "god.ai" warm gold, on one line. No other text.
+Constraints: create a complete, usable 3:1 X header design with crisp correct type and a beautiful mascot. No old brand names, no musecity.xyz, no slogan, no X or Twitter logos, no interface elements, no watermark, no repeated mascots, no coins, no cryptocurrency symbols, no black mascot, no red clothing, no busy stars covering the text.
+
+Final composition edit prompt:
+Use case: precise-object-edit
+Asset type: finished X header banner, 3:1 aspect ratio.
+Input image 1: the first generated musegod.ai banner; this is the edit target.
+Primary request: change ONLY the mascot group's size and placement to make the entire mascot, halo and scepter safe from X header cropping. Keep this beautiful banner's wordmark, exact spelling, colors, background, golden skyline, light, material treatment and overall visual identity unchanged.
+Composition correction: the canvas is 2172 x 724 (3:1). Uniformly reduce the entire right-hand mascot group INCLUDING halo, crown, body, cape and scepter to roughly 72% of its current size. Center the smaller group vertically within the safe band y=110 to y=610, with its center near x=1670. Nothing essential from the mascot group may enter the top 100 px or bottom 100 px. Keep the whole group in the right third. Reconstruct the atmospheric burgundy/gold background naturally in newly exposed areas. The mascot's face should retain a simple tiny curved friendly smile, not a cat-shaped mouth.
+Text invariant (verbatim): "musegod.ai", one occurrence, exact lowercase lettering, "muse" ivory and "god.ai" warm gold. Preserve the wordmark's existing size, placement, crisp edges and letter spacing.
+Constraints: maintain the full 3:1 canvas and existing background. No extra text or slogan, no frame, no watermark, no new characters or logos. The lower-left stays quiet for the avatar overlay. This is a targeted composition safety correction, not a redesign.
+

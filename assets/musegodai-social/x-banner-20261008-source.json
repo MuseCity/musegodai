@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-08",
+  "brand": "musegod.ai",
+  "use": "X profile header banner",
+  "generator": "OpenAI built-in image_gen",
+  "processing": "The selected generated output is copied unchanged as the master. The upload export is resized to 1500 x 500 with Lanczos3 and PNG compression; no cropping, compositing or content changes. The master ratio differs from 3:1 by less than 0.3%.",
+  "referencesInspected": [
+    "apps/web/public/brand/icon.png",
+    "assets/musecity-mascot-set/generated/mascot.png"
+  ],
+  "inputImages": "Initial banner generated from a textual brand description; final edit used the first generated banner as its target.",
+  "platformSpec": {
+    "recommendedWidth": 1500,
+    "recommendedHeight": 500,
+    "source": "https://help.x.com/en/managing-your-account/how-to-customize-your-profile",
+    "cropNote": "X warns that approximately 60 px at the top and bottom may be cropped on some displays.",
+    "cropSource": "https://help.x.com/en/managing-your-account/common-issues-when-uploading-profile-photo"
+  },
+  "publication": "Not uploaded to X",
+  "files": [
+    {
+      "path": "assets/musegodai-social/x-banner-20261008-master.png",
+      "bytes": 1797428,
+      "sha256": "8dbe3e49d67a48e9a4765464ffcb349e18dcc636d9b4aa23f7213de7be52407e",
+      "width": 2170,
+      "height": 725,
+      "format": "png",
+      "role": "Selected built-in image_gen output"
+    },
+    {
+      "path": "assets/musegodai-social/x-banner-20261008.png",
+      "bytes": 1294035,
+      "sha256": "26f20b83ae6366ba3d1a6d1bfda20e39ef79613dc1dac0299f71626a2cb482a7",
+      "width": 1500,
+      "height": 500,
+      "format": "png",
+      "role": "X header upload export"
+    },
+    {
+      "path": "assets/musegodai-social/x-banner-20261008-prompt.txt",
+      "bytes": 4254,
+      "sha256": "fb1dc569124f2dc0e4e8b722876fdc816d359d999303847831a17b18c5e5e88a",
+      "role": "Exact generation and final edit prompts"
+    }
+  ]
+}
