@@ -114,7 +114,14 @@ export const museReportSchema = z
   .refine((report) => report.status !== "skipped" || report.step === "look", {
     path: ["status"],
     message: "Only the look step may be skipped.",
-  });
+  })
+  .refine(
+    (report) => (report.status === "needs_you") === (report.code !== undefined),
+    {
+      path: ["code"],
+      message: "A code is required only for needs_you reports.",
+    },
+  );
 export type MuseReport = z.infer<typeof museReportSchema>;
 export const museSignatureSchema = z
   .object({

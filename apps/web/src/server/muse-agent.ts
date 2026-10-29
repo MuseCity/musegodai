@@ -131,13 +131,14 @@ export async function reportMuseStep(
     "SELECT * FROM musecity.muse_reports WHERE binding_id=$1 AND step=$2",
     [binding.id, body.step],
   );
-  const url = body.url ?? null,
-    founding = body.founding_number ?? null;
+  const url = body.url ?? previous?.url ?? null,
+    founding = body.founding_number ?? previous?.founding_number ?? null;
   if (
     body.step !== "soul" &&
     body.step !== "look" &&
-    ((previous?.url ?? null) !== url ||
-      (previous?.founding_number ?? null) !== founding)
+    ((body.url != null && previous?.url !== body.url) ||
+      (body.founding_number != null &&
+        previous?.founding_number !== body.founding_number))
   )
     await db.query(
       "UPDATE musecity.muse_signatures SET state='superseded' WHERE binding_id=$1 AND place=$2 AND state IN ('queued','sent','handed_to_agent')",

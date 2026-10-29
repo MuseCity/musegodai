@@ -151,6 +151,22 @@ describe("shared muse vocabulary", () => {
       ).toBe(false);
   });
 
+  it("requires a code exactly when a report needs the keeper", () => {
+    for (const code of reportCodes) {
+      expect(
+        museReportSchema.safeParse({ step: "x", status: "needs_you", code })
+          .success,
+      ).toBe(true);
+      for (const status of ["done", "skipped"])
+        expect(
+          museReportSchema.safeParse({ step: "look", status, code }).success,
+        ).toBe(false);
+    }
+    expect(
+      museReportSchema.safeParse({ step: "x", status: "needs_you" }).success,
+    ).toBe(false);
+  });
+
   it("validates report fields without accepting verified steps or free text", () => {
     const wallet = "0x" + "12".repeat(20);
     expect(

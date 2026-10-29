@@ -216,12 +216,12 @@ describe("keeper signatures and request-driven relay with isolated PostgreSQL", 
     expect(await rows()).toHaveLength(0);
   });
 
-  it("rejects past and future timestamps beyond 600 seconds and missing timestamps", async () => {
+  it("rejects timestamps older than 600 seconds, more than 30 seconds ahead, or missing", async () => {
     const f = setup();
     await connect(f);
     const clock = now();
     vi.spyOn(Date, "now").mockReturnValue(clock * 1000);
-    for (const at of [clock - 601, clock + 601])
+    for (const at of [clock - 601, clock + 31, clock + 600, clock + 601])
       expect(await submit(f, await signed(f, "elsewhere", at))).toMatchObject({
         status: 400,
         data: { error: { code: "SIGNATURE_EXPIRED" } },
@@ -232,6 +232,28 @@ describe("keeper signatures and request-driven relay with isolated PostgreSQL", 
       status: 400,
       data: { error: { code: "SIGNATURE_EXPIRED" } },
     });
+  });
+
+  it("accepts the 30-second future boundary for submission and relay", async () => {
+    const f = setup();
+    await connect(f);
+    const clock = now();
+    vi.spyOn(Date, "now").mockReturnValue(clock * 1000);
+    expect(
+      (await submit(f, await signed(f, "elsewhere", clock + 30))).status,
+    ).toBe(200);
+    expect(await drain(f)).toEqual({ sent: 1, left: 0 });
+  });
+
+  it("expires queued timestamps more than 30 seconds ahead without relaying", async () => {
+    const f = setup();
+    await connect(f);
+    const clock = now();
+    vi.spyOn(Date, "now").mockReturnValue(clock * 1000);
+    await seed(f, 1, clock + 31);
+    expect(await drain(f)).toEqual({ sent: 0, left: 0 });
+    expect((await rows())[0].state).toBe("expired");
+    expect(f.musegod.postWorlds).not.toHaveBeenCalled();
   });
 
   it("expires queued rows that age past the window and asks the keeper to sign again", async () => {
@@ -313,6 +335,26 @@ describe("keeper signatures and request-driven relay with isolated PostgreSQL", 
     });
     await drain(f);
     expect(f.musegod.postWorlds).toHaveBeenCalledTimes(1);
+  });
+
+  it("records an upstream 429 and stops before sending any further rows", async () => {
+    const f = setup();
+    await connect(f);
+    await seed(f, 3);
+    f.musegod.postWorlds.mockResolvedValueOnce({
+      status: 429,
+      code: "rate_limited",
+    });
+    expect(await drain(f)).toEqual({ sent: 0, left: 3 });
+    expect(f.musegod.postWorlds).toHaveBeenCalledTimes(1);
+    expect(
+      (await rows()).map((r) => [r.state, r.attempts, r.result_code]),
+    ).toEqual([
+      ["queued", 1, "rate_limited"],
+      ["queued", 0, null],
+      ["queued", 0, null],
+    ]);
+    expect(await drain(f)).toEqual({ sent: 3, left: 0 });
   });
 
   it("commits earlier sends and their budget when a later SQL update is interrupted", async () => {
@@ -424,6 +466,40 @@ describe("keeper signatures and request-driven relay with isolated PostgreSQL", 
       }),
     );
     expect(f.musegod.postWorlds).not.toHaveBeenCalled();
+  });
+
+  it("preserves place URLs, founding numbers and signatures on needs-you-only reports", async () => {
+    const f = setup(),
+      token = await connect(f);
+    await report(f, token, { step: "terrakin", status: "done", url: terrakin });
+    await report(f, token, {
+      step: "flock",
+      status: "done",
+      founding_number: 12,
+    });
+    expect((await submit(f, await signed(f))).status).toBe(200);
+    expect((await submit(f, await signed(f, "muse_link"))).status).toBe(200);
+    expect((await submit(f, await signed(f, "flock_claim"))).status).toBe(200);
+    for (const step of ["terrakin", "flock"])
+      await report(f, token, { step, status: "needs_you", code: "approval" });
+    const reports = await withDatabase(config.testAdminUrl, (d) =>
+      d.query(
+        "SELECT step,url,founding_number FROM musecity.muse_reports ORDER BY step",
+      ),
+    );
+    expect(reports).toEqual([
+      { step: "flock", url: null, founding_number: 12 },
+      { step: "terrakin", url: terrakin, founding_number: null },
+    ]);
+    expect((await rows()).map((r) => r.state)).toEqual([
+      "queued",
+      "queued",
+      "handed_to_agent",
+    ]);
+    expect(
+      (await f.call("/agent/muse", { token })).data.signatures,
+    ).toHaveLength(1);
+    expect(await drain(f)).toEqual({ sent: 2, left: 0 });
   });
 
   it("reconstructs the latest report instead of substituting a stale signature's URL", async () => {

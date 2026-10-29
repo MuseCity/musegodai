@@ -15,6 +15,11 @@ import { ApiError, requireValue } from "./errors";
 import { keeperMuse, type MuseDeps } from "./muses";
 import type { MuseBindingRow, MuseReportRow, MuseSignatureRow } from "./schema";
 
+function withinWindow(at: number | null): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  return at !== null && now - 600 <= at && at <= now + 30;
+}
+
 // Run transfer cleanup before taking a binding lock: cleanup locks the
 // registration first, as does connection redemption. Also used for cached
 // retries so they cannot bypass current keeper/account authorization.
@@ -108,7 +113,7 @@ export async function submitSignature(
   const at = body.at ?? null;
   if (body.kind !== "flock_claim")
     requireValue(
-      at !== null && Math.abs(Math.floor(Date.now() / 1000) - at) <= 600,
+      withinWindow(at),
       400,
       "SIGNATURE_EXPIRED",
       "This line has expired. Please sign again.",
@@ -185,11 +190,7 @@ export async function relayPending(
           );
           if (!row) return "skip";
           const expire = async () => {
-            if (
-              row.at !== null &&
-              Math.abs(Math.floor(Date.now() / 1000) - row.at) <= 600
-            )
-              return false;
+            if (withinWindow(row.at)) return false;
             await db.query(
               "UPDATE musecity.muse_signatures SET state='expired' WHERE id=$1",
               [row.id],
@@ -269,7 +270,7 @@ export async function relayPending(
               "UPDATE musecity.muse_signatures SET state='failed',result_code=$2 WHERE id=$1",
               [row.id, result.code],
             );
-          return "skip";
+          return result.status === 429 ? "stop" : "skip";
         });
         if (outcome === "sent") sent++;
         if (outcome === "stop") break;
