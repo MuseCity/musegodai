@@ -9,6 +9,7 @@ import {
   type AgentConnectionStatus,
 } from "../shared/contracts";
 import type { AgentRow } from "./schema";
+import { bindRedeemedAgent } from "./muses";
 type Registration = {
   id: string;
   name: string;
@@ -20,7 +21,17 @@ type Registration = {
   agent_id: string | null;
 };
 const expirySeconds = 86400;
-export async function createConnection(db: Database, a: Actor, name: string) {
+export async function createConnection(
+  db: Database,
+  a: Actor,
+  name: string,
+  muse?: {
+    tokenId: number;
+    agentId8004: number;
+    holder: string;
+    description: string;
+  },
+) {
   const connectionId = id("reg");
   const otp = secret("mcr");
   const expiresAt = future(600);
@@ -45,6 +56,19 @@ export async function createConnection(db: Database, a: Actor, name: string) {
       expiresAt,
     ],
   );
+  if (muse)
+    await db.query(
+      "INSERT INTO musecity.muse_bindings(id,token_id,agent_id_8004,account_id,registration_id,holder_address,description) VALUES($1,$2,$3,$4,$5,$6,$7)",
+      [
+        id("muse"),
+        muse.tokenId,
+        muse.agentId8004,
+        a.account.id,
+        connectionId,
+        muse.holder,
+        muse.description,
+      ],
+    );
   await audit(db, a, "connection.create", connectionId);
   return { connectionId, otp, expiresAt };
 }
@@ -369,6 +393,7 @@ export async function activate(
     [agentId, r.owner_account_id, r.name, JSON.stringify(r.approved_scopes)],
   );
   const credential = await issueCredential(db, agentId);
+  await bindRedeemedAgent(db, registrationId, agentId);
   await db.query(
     "UPDATE musecity.registrations SET status='activated',agent_id=$2 WHERE id=$1",
     [registrationId, agentId],

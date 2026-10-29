@@ -92,6 +92,7 @@ import * as oauth from "./oauth";
 import { chatgptFile, importChatgptImage } from "./chatgpt-media";
 import { musegodOrg, type MusegodServices } from "./musegod";
 import { robinhoodMuseChain, type MuseChain } from "./muse-chain";
+import * as muses from "./muses";
 export type Services = {
   connectionString: string;
   store: ObjectStore;
@@ -175,6 +176,29 @@ async function json<T>(c: Context<AppEnv>, schema: z.ZodType<T>): Promise<T> {
 // No public request header or tool argument can opt into OAuth REST dispatch.
 export function createApi(s: Services, mcpCredential?: string) {
   const app = new Hono<AppEnv>();
+  const museDeps = (): muses.MuseDeps => {
+    requireValue(
+      s.musegod && s.museChain && s.wallets,
+      503,
+      "MUSES_UNAVAILABLE",
+      "Muse setup is unavailable right now.",
+    );
+    return {
+      musegod: s.musegod,
+      chain: s.museChain,
+      wallets: s.wallets,
+      origin: s.origin,
+    };
+  };
+  const museId = (ref: string) => {
+    requireValue(
+      /^[1-9]\d{0,2}$/.test(ref),
+      404,
+      "MUSE_NOT_FOUND",
+      "Muse not found.",
+    );
+    return Number(ref);
+  };
   const db = <T>(fn: (d: Database) => Promise<T>) =>
     withDatabase(s.connectionString, fn);
   const authed = async <T>(
@@ -1198,6 +1222,57 @@ export function createApi(s: Services, mcpCredential?: string) {
     c.req.header("authorization")
       ? authed(c, undefined, true, fn)
       : db((d) => fn(d));
+  app.get("/api/v1/muses", async (c) =>
+    c.json(
+      await publicRead(c, (d, a) =>
+        muses.directory(d, museDeps(), new URL(c.req.url).searchParams, a),
+      ),
+    ),
+  );
+  app.get("/api/v1/muses/:ref", async (c) => {
+    // Hono decodes params already; pass the original ref so parseMuseRef's one
+    // decode cannot turn a double-encoded reference into another muse.
+    const read = (d: Database) =>
+      muses.publicMuse(
+        d,
+        museDeps(),
+        c.req.path.slice("/api/v1/muses/".length),
+      );
+    return c.json(
+      c.req.header("authorization")
+        ? await authed(c, undefined, false, read)
+        : await db((d) => d.transaction(() => read(d))),
+    );
+  });
+  app.get("/api/v1/me/muses", async (c) =>
+    c.json(
+      await authed(c, undefined, true, (d, a) =>
+        muses.myMuses(d, museDeps(), a),
+      ),
+    ),
+  );
+  app.get("/api/v1/me/muses/:id", async (c) =>
+    c.json(
+      await authed(c, undefined, true, (d, a) =>
+        muses.keeperMuse(d, museDeps(), a, museId(c.req.param("id"))),
+      ),
+    ),
+  );
+  app.post("/api/v1/me/muses/:id/start", async (c) =>
+    c.json(
+      await authed(c, undefined, true, (d, a) =>
+        muses.startMuse(d, museDeps(), a, museId(c.req.param("id"))),
+      ),
+      201,
+    ),
+  );
+  app.post("/api/v1/me/muses/:id/restart", async (c) =>
+    c.json(
+      await authed(c, undefined, true, (d, a) =>
+        muses.restartMuse(d, museDeps(), a, museId(c.req.param("id"))),
+      ),
+    ),
+  );
   app.get("/api/v1/proposals", async (c) =>
     c.json(
       await governanceRead(c, (d, a) =>
