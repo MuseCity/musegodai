@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decodeFunctionData,
   encodeAbiParameters,
+  encodeEventTopics,
   erc721Abi,
   hashMessage,
   parseAbi,
@@ -135,27 +136,129 @@ describe("Robinhood muse chain reads", () => {
     expect(requests.filter((r) => r.method === "eth_chainId")).toHaveLength(2);
   });
 
-  it("constructs with malformed or non-HTTPS configuration but rejects each read without fetching", async () => {
-    const requests = rpcMock(() => "0x1237");
+  it("drops malformed and non-HTTPS configuration and uses only the public endpoint", async () => {
+    const requests = rpcMock((r) =>
+      r.method === "eth_chainId"
+        ? "0x1237"
+        : encodeAbiParameters([{ type: "address" }], [owner]),
+    );
     for (const endpoint of [
       "http://rpc.example.test",
       "ws://rpc.example.test",
       "invalid",
-    ]) {
-      let chain!: ReturnType<typeof robinhoodMuseChain>;
-      expect(() => (chain = robinhoodMuseChain(endpoint))).not.toThrow();
-      for (const read of [
-        () => chain.ownerOf(1),
-        () => chain.isController(6592, owner),
-        () => chain.bindingOf(6592),
-        () => chain.verifyMessage(owner, "Bard", "0x1234"),
-      ])
-        await expect(read()).rejects.toMatchObject({
-          status: 503,
-          code: "RPC_UNAVAILABLE",
-        });
+    ])
+      expect(await robinhoodMuseChain(endpoint).ownerOf(1)).toBe(owner);
+    expect(requests).toHaveLength(6);
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.every(
+          ([url]) => String(url) === "https://rpc.mainnet.chain.robinhood.com/",
+        ),
+    ).toBe(true);
+  });
+
+  it.each([429, 500, 503, "network", "timeout"] as const)(
+    "falls back from configured RPC on %s, with configured first for every read",
+    async (failure) => {
+      const endpoint = "https://rpc.example.test/fake-key";
+      const urls: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          urls.push(url);
+          if (url === endpoint) {
+            if (failure === "network") throw new TypeError("offline");
+            if (failure === "timeout")
+              throw new DOMException("timeout", "TimeoutError");
+            return new Response(null, { status: failure });
+          }
+          const r = JSON.parse(String(init?.body));
+          return Response.json({
+            jsonrpc: "2.0",
+            id: r.id,
+            result:
+              r.method === "eth_chainId"
+                ? "0x1237"
+                : encodeAbiParameters([{ type: "address" }], [owner]),
+          });
+        }),
+      );
+      expect(await robinhoodMuseChain(endpoint).ownerOf(1)).toBe(owner);
+      expect(urls).toEqual([
+        endpoint,
+        "https://rpc.mainnet.chain.robinhood.com/",
+        endpoint,
+        "https://rpc.mainnet.chain.robinhood.com/",
+      ]);
+    },
+  );
+
+  it("does not fall back on HTTP 400 or JSON-RPC validation errors and sanitizes all failures", async () => {
+    const endpoint = "https://rpc.example.test/fake-key";
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const failure of [400, 401, 403, "rpc", "both"] as const) {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async (_input, init) => {
+            if (failure === "rpc") {
+              const r = JSON.parse(String(init?.body));
+              return Response.json({
+                jsonrpc: "2.0",
+                id: r.id,
+                error: { code: -32602, message: endpoint },
+              });
+            }
+            return new Response(endpoint, {
+              status: failure === "both" ? 503 : failure,
+            });
+          }),
+        );
+        const error = await robinhoodMuseChain(endpoint)
+          .ownerOf(1)
+          .catch((e) => e);
+        expect(error).toMatchObject({ code: "RPC_UNAVAILABLE" });
+        expect(String(error) + JSON.stringify(error)).not.toContain(endpoint);
+        expect(fetch).toHaveBeenCalledTimes(failure === "both" ? 2 : 1);
+      }
+      expect(JSON.stringify(log.mock.calls)).not.toContain(endpoint);
+    } finally {
+      log.mockRestore();
     }
-    expect(requests).toHaveLength(0);
+  });
+
+  it("reads the head and decodes distinct Muses Transfer tokens in the requested range", async () => {
+    const requests = rpcMock((r) => {
+      if (r.method === "eth_chainId") return "0x1237";
+      if (r.method === "eth_blockNumber") return "0x100";
+      expect(r.method).toBe("eth_getLogs");
+      expect(r.params[0]).toMatchObject({
+        address: museContract,
+        fromBlock: "0x65",
+        toBlock: "0x100",
+      });
+      return [1n, 1n].map((tokenId, i) => ({
+        address: museContract,
+        topics: encodeEventTopics({
+          abi: erc721Abi,
+          eventName: "Transfer",
+          args: { from: owner, to: stranger, tokenId },
+        }),
+        data: "0x",
+        blockNumber: "0x66",
+        transactionHash: "0x" + "1".repeat(64),
+        transactionIndex: "0x0",
+        blockHash: "0x" + "2".repeat(64),
+        logIndex: "0x" + i,
+        removed: false,
+      }));
+    });
+    const chain = robinhoodMuseChain();
+    expect(await chain.headBlock()).toBe(256n);
+    expect(await chain.transferredTokens(101n, 256n)).toEqual([1]);
+    expect(requests.filter((r) => r.method === "eth_getLogs")).toHaveLength(1);
   });
 
   it("rejects a wrong chain for reads and even an otherwise valid EOA signature", async () => {
@@ -173,7 +276,7 @@ describe("Robinhood muse chain reads", () => {
     expect(requests.every((r) => r.method === "eth_chainId")).toBe(true);
   });
 
-  it("maps network, HTTP, RPC and malformed results to a stable error without retries", async () => {
+  it("maps exhausted endpoints, RPC and malformed results to a stable error without retries", async () => {
     for (const result of ["offline", "http", "rpc", "malformed"] as const) {
       let calls = 0;
       vi.stubGlobal(
@@ -203,7 +306,7 @@ describe("Robinhood muse chain reads", () => {
       await expect(
         robinhoodMuseChain("https://rpc.example.test").ownerOf(1),
       ).rejects.toMatchObject({ status: 503, code: "RPC_UNAVAILABLE" });
-      expect(calls).toBe(2);
+      expect(calls).toBe(result === "offline" || result === "http" ? 3 : 2);
     }
   });
 

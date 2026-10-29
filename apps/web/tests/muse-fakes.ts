@@ -100,6 +100,10 @@ export function withMuses(f: ReturnType<typeof fixture>) {
     })),
   } satisfies MusegodServices;
   const chain = {
+    headBlock: vi.fn(async () => 10164n),
+    transferredTokens: vi.fn(
+      async (_from: bigint, _to: bigint): Promise<number[]> => [],
+    ),
     ownerOf: vi.fn(async (id: number) => owners.get(id)!),
     bindingOf: vi.fn(async (id: number) => bindings.get(id)!),
     isController: vi.fn(

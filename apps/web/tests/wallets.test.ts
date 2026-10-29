@@ -271,37 +271,139 @@ describe("wallet provenance and current on-chain qualification", () => {
       { code: "RPC_UNAVAILABLE" },
     );
   });
-  it("uses a server-configured HTTPS endpoint without falling back on errors", async () => {
+  it.each([429, 503, "network", "timeout"] as const)(
+    "balance falls back from configured RPC on %s",
+    async (failure) => {
+      const endpoint = "https://rpc.example.test/fake-key";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          if (String(input) === endpoint) {
+            if (failure === "network") throw new TypeError("offline");
+            if (failure === "timeout")
+              throw new DOMException("timeout", "TimeoutError");
+            return new Response(null, { status: failure });
+          }
+          return Response.json([
+            { jsonrpc: "2.0", id: 1, result: "0x1237" },
+            { jsonrpc: "2.0", id: 2, result: "0x" + "0".repeat(63) + "7" },
+          ]);
+        }),
+      );
+      expect(
+        await privyWalletServices(
+          "local-app",
+          "local-secret",
+          endpoint,
+        ).balance(owner, governanceRules),
+      ).toBe(7n);
+      expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+        endpoint,
+        "https://rpc.mainnet.chain.robinhood.com",
+      ]);
+    },
+  );
+
+  it("does not fall back on non-retryable HTTP, JSON-RPC errors, malformed replies or wrong networks", async () => {
+    const endpoint = "https://rpc.example.test/fake-key";
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const failure of [
+        400,
+        401,
+        403,
+        "rpc",
+        "wrong-chain",
+        "malformed",
+      ] as const) {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () =>
+            typeof failure === "number"
+              ? new Response(endpoint, { status: failure })
+              : Response.json(
+                  failure === "malformed"
+                    ? []
+                    : [
+                        {
+                          jsonrpc: "2.0",
+                          id: 1,
+                          result:
+                            failure === "wrong-chain" ? "0x2105" : "0x1237",
+                        },
+                        {
+                          jsonrpc: "2.0",
+                          id: 2,
+                          error: { code: -32602, message: endpoint },
+                        },
+                      ],
+                ),
+          ),
+        );
+        const error = await privyWalletServices(
+          "local-app",
+          "local-secret",
+          endpoint,
+        )
+          .balance(owner, governanceRules)
+          .catch((e) => e);
+        expect(error).toMatchObject({ code: "RPC_UNAVAILABLE" });
+        expect(String(error) + JSON.stringify(error)).not.toContain(endpoint);
+        expect(fetch).toHaveBeenCalledTimes(1);
+      }
+      expect(JSON.stringify(log.mock.calls)).not.toContain(endpoint);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("keeps stable sanitized errors when both endpoints fail", async () => {
+    const endpoint = "https://rpc.example.test/fake-key";
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          throw new TypeError(endpoint);
+        }),
+      );
+      const error = await privyWalletServices(
+        "local-app",
+        "local-secret",
+        endpoint,
+      )
+        .balance(owner, governanceRules)
+        .catch((e) => e);
+      expect(error).toMatchObject({ status: 503, code: "RPC_UNAVAILABLE" });
+      expect(
+        String(error) + JSON.stringify(error) + JSON.stringify(log.mock.calls),
+      ).not.toContain(endpoint);
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("uses configured HTTPS first and skips non-HTTPS configuration", async () => {
     rpcMock((r) =>
       r.method === "eth_chainId" ? "0x1237" : "0x" + "0".repeat(64),
     );
-    const endpoint = "https://rpc.example.test/private-endpoint";
-    expect(
-      await privyWalletServices("local-app", "local-secret", endpoint).balance(
-        owner,
-        governanceRules,
-      ),
-    ).toBe(0n);
-    expect(vi.mocked(fetch).mock.calls[0]![0]).toBe(endpoint);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("rate limited", { status: 429 })),
-    );
-    await expect(
-      privyWalletServices("local-app", "local-secret", endpoint).balance(
-        owner,
-        governanceRules,
-      ),
-    ).rejects.toMatchObject({ code: "RPC_UNAVAILABLE" });
-    expect(fetch).toHaveBeenCalledTimes(1);
-    await expect(
-      privyWalletServices(
-        "local-app",
-        "local-secret",
-        "http://rpc.example.test",
-      ).balance(owner, governanceRules),
-    ).rejects.toMatchObject({ code: "RPC_UNAVAILABLE" });
-    expect(fetch).toHaveBeenCalledTimes(1);
+    for (const endpoint of [
+      "https://rpc.example.test/fake-key",
+      "http://rpc.example.test",
+    ]) {
+      expect(
+        await privyWalletServices(
+          "local-app",
+          "local-secret",
+          endpoint,
+        ).balance(owner, governanceRules),
+      ).toBe(0n);
+    }
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      "https://rpc.example.test/fake-key",
+      "https://rpc.mainnet.chain.robinhood.com",
+    ]);
   });
 });
 describe("wallet transfer safety and status", () => {

@@ -6,7 +6,7 @@ import {
   isAddress,
   type Address,
 } from "viem";
-import { robinhood } from "../shared/chains";
+import { robinhoodEndpoints, retryableRpc } from "./rpc";
 import {
   governanceRules,
   type GovernanceRules,
@@ -134,105 +134,90 @@ export function privyWalletServices(
       try {
         // Keep the batch request-scoped. A shared scheduler can combine I/O
         // owned by different Cloudflare Worker request contexts.
-        const endpoint = rpcUrl || robinhood.rpcUrls.default.http[0];
-        requireValue(
-          new URL(endpoint).protocol === "https:",
-          503,
-          "RPC_UNAVAILABLE",
-          "A secure RPC endpoint is required.",
-        );
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(8000),
-          body: JSON.stringify([
-            { jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] },
-            {
-              jsonrpc: "2.0",
-              id: 2,
-              method: "eth_call",
-              params: [
+        const endpoints = robinhoodEndpoints(rpcUrl);
+        for (const [index, endpoint] of endpoints.entries()) {
+          try {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: AbortSignal.timeout(8000),
+              body: JSON.stringify([
+                { jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] },
                 {
-                  to: rules.tokenAddress,
-                  data: encodeFunctionData({
-                    abi: erc20Abi,
-                    functionName: "balanceOf",
-                    args: [address as Address],
-                  }),
+                  jsonrpc: "2.0",
+                  id: 2,
+                  method: "eth_call",
+                  params: [
+                    {
+                      to: rules.tokenAddress,
+                      data: encodeFunctionData({
+                        abi: erc20Abi,
+                        functionName: "balanceOf",
+                        args: [address as Address],
+                      }),
+                    },
+                    "latest",
+                  ],
                 },
-                "latest",
-              ],
-            },
-          ]),
-        });
-        if (!response.ok)
-          throw Object.assign(new Error("RPC request failed"), {
-            status: response.status,
-          });
-        const replies: unknown = await response.json();
-        requireValue(
-          Array.isArray(replies) && replies.length === 2,
-          503,
-          "RPC_UNAVAILABLE",
-          "Invalid RPC response.",
-        );
-        const result = (id: number): string => {
-          const matches = (replies as Record<string, unknown>[]).filter(
-            (r) => r && r.id === id,
-          );
-          const value = matches[0];
-          if (value?.error) {
-            const code = (value.error as { code?: unknown }).code;
-            throw Object.assign(new Error("RPC method failed"), {
-              code: typeof code === "number" ? code : undefined,
+              ]),
             });
+            if (!response.ok)
+              throw Object.assign(new Error("RPC request failed"), {
+                status: response.status,
+              });
+            const replies: unknown = await response.json();
+            requireValue(
+              Array.isArray(replies) && replies.length === 2,
+              503,
+              "RPC_UNAVAILABLE",
+              "Invalid RPC response.",
+            );
+            const result = (id: number): string => {
+              const matches = (replies as Record<string, unknown>[]).filter(
+                (r) => r && r.id === id,
+              );
+              const value = matches[0];
+              if (value?.error) {
+                const code = (value.error as { code?: unknown }).code;
+                throw Object.assign(new Error("RPC method failed"), {
+                  code: typeof code === "number" ? code : undefined,
+                });
+              }
+              requireValue(
+                matches.length === 1 &&
+                  value?.jsonrpc === "2.0" &&
+                  typeof value.result === "string" &&
+                  /^0x[0-9a-f]+$/i.test(value.result),
+                503,
+                "RPC_UNAVAILABLE",
+                "Invalid RPC response.",
+              );
+              return value!.result as string;
+            };
+            requireValue(
+              BigInt(result(1)) === BigInt(rules.chainId),
+              503,
+              "RPC_UNAVAILABLE",
+              "Wrong network.",
+            );
+            return decodeFunctionResult({
+              abi: erc20Abi,
+              functionName: "balanceOf",
+              data: result(2) as `0x${string}`,
+            });
+          } catch (error) {
+            if (
+              error instanceof ApiError ||
+              !retryableRpc(error) ||
+              index === endpoints.length - 1
+            )
+              throw error;
           }
-          requireValue(
-            matches.length === 1 &&
-              value?.jsonrpc === "2.0" &&
-              typeof value.result === "string" &&
-              /^0x[0-9a-f]+$/i.test(value.result),
-            503,
-            "RPC_UNAVAILABLE",
-            "Invalid RPC response.",
-          );
-          return value!.result as string;
-        };
-        requireValue(
-          BigInt(result(1)) === BigInt(rules.chainId),
-          503,
-          "RPC_UNAVAILABLE",
-          "Wrong network.",
-        );
-        return decodeFunctionResult({
-          abi: erc20Abi,
-          functionName: "balanceOf",
-          data: result(2) as `0x${string}`,
-        });
-      } catch (error) {
-        const causes: {
-          name: string;
-          status?: number;
-          code?: string | number;
-        }[] = [];
-        let cause: unknown = error;
-        while (cause instanceof Error && causes.length < 5) {
-          const detail = cause as Error & {
-            status?: number;
-            code?: string | number;
-            cause?: unknown;
-          };
-          causes.push({
-            name: detail.name,
-            status: detail.status,
-            code: detail.code,
-          });
-          cause = detail.cause;
         }
-        // Omit RPC payloads, wallet addresses and balances from diagnostics.
-        console.error(
-          JSON.stringify({ event: "wallet.balance.failed", causes }),
-        );
+        throw new Error("No RPC endpoint available.");
+      } catch {
+        // Never include provider messages, URLs, payloads or wallet addresses.
+        console.error(JSON.stringify({ event: "wallet.balance.failed" }));
         throw new ApiError(
           503,
           "RPC_UNAVAILABLE",

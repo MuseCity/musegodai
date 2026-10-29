@@ -4,6 +4,7 @@ import {
   timestamp,
   jsonb,
   integer,
+  bigint,
   boolean,
   primaryKey,
 } from "drizzle-orm/pg-core";
@@ -224,6 +225,11 @@ export const museSignatures = appSchema.table("muse_signatures", {
   sent_at: timestamp({ withTimezone: true, mode: "date" }),
   result_code: text(),
   created_at: time("created_at"),
+});
+export const museSweep = appSchema.table("muse_sweep", {
+  id: text().primaryKey(),
+  last_block: bigint({ mode: "bigint" }).notNull(),
+  updated_at: time("updated_at"),
 });
 export type AccountRow = typeof accounts.$inferSelect;
 export type AgentRow = typeof agents.$inferSelect;

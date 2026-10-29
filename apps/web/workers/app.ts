@@ -2,11 +2,23 @@ import { servicesContext } from "../src/context";
 import { createRequestHandler, RouterContextProvider } from "react-router";
 import { createApi, productionServices } from "../src/server/api";
 import { httpsRedirect } from "../src/shared/seo";
+import { sweepMuseTransfers } from "../src/server/muse-sweep";
 const handler = createRequestHandler(
   () => import("virtual:react-router/server-build"),
   import.meta.env.MODE,
 );
 export default {
+  async scheduled(_controller, env, ctx) {
+    const services = productionServices(env, ctx);
+    ctx.waitUntil(
+      sweepMuseTransfers(services.connectionString, {
+        musegod: services.musegod!,
+        chain: services.museChain!,
+        wallets: services.wallets!,
+        origin: services.origin,
+      }),
+    );
+  },
   async fetch(request, env, ctx) {
     const redirect = httpsRedirect(request, env.APP_ORIGIN);
     if (redirect) return redirect;
@@ -18,6 +30,7 @@ export default {
       path.startsWith("/.well-known/") ||
       path.startsWith("/media/") ||
       path.startsWith("/sitemaps/") ||
+      /^\/muses\/[^/]+\/start\.md$/.test(path) ||
       [
         "/skill.md",
         "/openapi.json",

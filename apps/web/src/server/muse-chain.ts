@@ -2,7 +2,9 @@ import {
   createPublicClient,
   erc721Abi,
   http,
+  fallback,
   parseAbi,
+  parseAbiItem,
   BaseError,
   HttpRequestError,
   RpcRequestError,
@@ -13,8 +15,11 @@ import {
 import { robinhood } from "../shared/chains";
 import { adapter8004, museContract } from "../shared/muses";
 import { ApiError, requireValue } from "./errors";
+import { robinhoodEndpoints, retryableRpc } from "./rpc";
 
 export type MuseChain = {
+  headBlock(): Promise<bigint>;
+  transferredTokens(fromBlock: bigint, toBlock: bigint): Promise<number[]>;
   ownerOf(tokenId: number): Promise<string>;
   isController(agentId: number, address: string): Promise<boolean>;
   bindingOf(agentId: number): Promise<{
@@ -45,7 +50,6 @@ function unavailable() {
 }
 
 export function robinhoodMuseChain(rpcUrl?: string): MuseChain {
-  const endpoint = rpcUrl || robinhood.rpcUrls.default.http[0];
   // Keep the client instance request-scoped. Never combine I/O belonging to
   // different Cloudflare Worker request contexts in a shared batch scheduler.
   const makeClient = (onError?: (error: unknown) => void) =>
@@ -53,11 +57,28 @@ export function robinhoodMuseChain(rpcUrl?: string): MuseChain {
       chain: robinhood,
       batch: { multicall: false },
       transport: (options) => {
-        const transport = http(endpoint, {
-          batch: false,
-          timeout: 8_000,
-          retryCount: 0,
-        })(options);
+        const transport = fallback(
+          robinhoodEndpoints(rpcUrl).map((endpoint) =>
+            http(endpoint, {
+              batch: false,
+              timeout: 8_000,
+              retryCount: 0,
+              // viem otherwise prefers a JSON-RPC error body over HTTP status.
+              // Keep 429/5xx eligible for fallback regardless of that body.
+              onFetchResponse(response) {
+                if (!response.ok)
+                  throw Object.assign(new Error("RPC HTTP request failed."), {
+                    status: response.status,
+                  });
+              },
+            }),
+          ),
+          {
+            rank: false,
+            retryCount: 0,
+            shouldThrow: (error) => !retryableRpc(error),
+          },
+        )(options);
         const request = ((...args: Parameters<typeof transport.request>) =>
           transport.request(...args).catch((error: unknown) => {
             onError?.(error);
@@ -73,7 +94,6 @@ export function robinhoodMuseChain(rpcUrl?: string): MuseChain {
 
   async function read<T>(operation: () => Promise<T>): Promise<T> {
     try {
-      if (new URL(endpoint).protocol !== "https:") throw unavailable();
       chainChecked ??= client.getChainId().then((chainId) => {
         requireValue(
           chainId === robinhood.id,
@@ -91,6 +111,26 @@ export function robinhoodMuseChain(rpcUrl?: string): MuseChain {
   }
 
   return {
+    headBlock: () => read(() => client.getBlockNumber({ cacheTime: 0 })),
+    transferredTokens: (fromBlock, toBlock) =>
+      read(async () => {
+        const logs = await client.getLogs({
+          address: museContract,
+          event: parseAbiItem(
+            "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+          ),
+          fromBlock,
+          toBlock,
+          strict: true,
+        });
+        return [
+          ...new Set(
+            logs
+              .map((log) => Number(log.args.tokenId))
+              .filter((id) => Number.isInteger(id) && id >= 1 && id <= 999),
+          ),
+        ];
+      }),
     async ownerOf(tokenId) {
       const cached = owners.get(tokenId);
       if (cached && cached.expiresAt > Date.now()) return cached.value;

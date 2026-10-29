@@ -127,6 +127,18 @@ async function bindingHeld(
   });
 }
 
+export async function endIfTransferred(
+  db: Database,
+  deps: MuseDeps,
+  binding: MuseBindingRow,
+  agentWallet: string | null,
+): Promise<boolean> {
+  if (binding.ended_at || (await bindingHeld(db, deps, binding, agentWallet)))
+    return false;
+  await endBinding(db, binding, "transferred");
+  return true;
+}
+
 async function currentBinding(
   db: Database,
   deps: MuseDeps,
@@ -144,8 +156,7 @@ async function currentBinding(
   ) {
     // The public upstream is a hint. Only chain ownership and the binding
     // account's linked addresses can establish that it has changed hands.
-    if (!(await bindingHeld(db, deps, binding, record.agent.wallet))) {
-      await endBinding(db, binding, "transferred");
+    if (await endIfTransferred(db, deps, binding, record.agent.wallet)) {
       binding = undefined;
     }
   }
