@@ -16,6 +16,7 @@ import { requireValue } from "./errors";
 import { boundedBody } from "./media";
 import { challenge } from "./oauth";
 import { chatgptFile } from "./chatgpt-media";
+import { museReportSchema } from "../shared/muses";
 
 type ApiFetch = (request: Request) => Response | Promise<Response>;
 const resourceId = z
@@ -208,6 +209,7 @@ export async function handleMcp(
                   "create_media_upload",
                   "complete_media_upload",
                   "upload_image",
+                  "report_muse_step",
                 ].includes(name)
               ? ["content:write"]
               : [
@@ -270,6 +272,20 @@ export async function handleMcp(
           if (!response.isError) await connected?.();
           return response;
         },
+      );
+      register(
+        "get_muse_setup",
+        "Read this bound muse Agent's setup, next step and keeper-signed flock claims. Requires content:read and an active muse binding.",
+        {},
+        () => call("/agent/muse"),
+      );
+      register(
+        "report_muse_step",
+        "Report this muse's soul, look or checked place details. Needs-you requests use fixed codes only. Requires content:write and an active muse binding; independently verified steps cannot be claimed.",
+        { ...museReportSchema.shape, idempotencyKey },
+        ({ idempotencyKey, ...body }) =>
+          call("/agent/muse/reports", "POST", body, idempotencyKey),
+        true,
       );
       register(
         "list_discovery",

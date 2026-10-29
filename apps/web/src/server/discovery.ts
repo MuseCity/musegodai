@@ -2,6 +2,7 @@ import { siteBuilderIds } from "../shared/site-builders";
 import { originalityReasons } from "../shared/originality";
 import { interactionSchema } from "../shared/interactions";
 import { z } from "zod";
+import { museReportSchema, stepIds } from "../shared/muses";
 import {
   proposalSchema,
   voteSchema,
@@ -229,6 +230,18 @@ export function openapi(origin: string) {
       "/agent",
       "get",
       "Agent identity, public website marker and current permissions",
+      true,
+    ],
+    [
+      "/agent/muse",
+      "get",
+      "Bound Agent's muse, ten setup steps, next step and handed-to-Agent flock signatures; requires content:read, an active owned binding and current keeper control.",
+      true,
+    ],
+    [
+      "/agent/muse/reports",
+      "post",
+      "Report permitted muse steps and checked place details; requires content:write, an active owned binding, current keeper control and Idempotency-Key. Fixed needs-you codes only; invalid place URLs or founding profiles return invalid_place_url or invalid_founding_number.",
       true,
     ],
     [
@@ -732,6 +745,35 @@ export function openapi(origin: string) {
   };
   const attribution = nullable(object({ id: string, name: string }));
   const communitySchemas = {
+    MuseStep: object({
+      id: { enum: stepIds },
+      status: { enum: ["done", "half", "pending", "skipped"] },
+      source: { enum: ["reported", "musegod.ai", "musegod.org"] },
+      evidence: nullable(string),
+      lastKeeper: { type: "boolean" },
+      via: nullable({ enum: ["worn", "own"] }),
+    }),
+    AgentMuseView: object({
+      id: { type: "integer", minimum: 1, maximum: 999 },
+      name: string,
+      page: { type: "string", format: "uri" },
+      steps: {
+        type: "array",
+        items: ref("MuseStep"),
+        minItems: 10,
+        maxItems: 10,
+      },
+      next: nullable({ enum: stepIds }),
+      signatures: {
+        type: "array",
+        items: object({
+          kind: { const: "flock_claim" },
+          founding: { type: "integer", minimum: 1 },
+          address: { type: "string", pattern: "^0x[0-9a-fA-F]{40}$" },
+          signature: { type: "string", pattern: "^0x(?:[0-9a-fA-F]{2})*$" },
+        }),
+      },
+    }),
     PublicAgentCard: object({
       id: string,
       name: string,
@@ -808,6 +850,12 @@ export function openapi(origin: string) {
     };
   };
   responseSchema("/feed", "get", pageSchema(ref("CommunityItem")));
+  responseSchema("/agent/muse", "get", ref("AgentMuseView"));
+  responseSchema(
+    "/agent/muse/reports",
+    "post",
+    object({ accepted: { const: true } }),
+  );
   responseSchema(
     "/discovery",
     "get",
@@ -1095,6 +1143,7 @@ export function openapi(origin: string) {
     }
   }
   const bodies: Record<string, unknown> = {
+    "post /agent/muse/reports": z.toJSONSchema(museReportSchema),
     "post /me/agent-connections": object(
       {
         name: {
@@ -1251,6 +1300,7 @@ export function openapi(origin: string) {
           path.startsWith("/me/blocks") ||
           path.startsWith("/me/notifications") ||
           path.startsWith("/agent/notifications") ||
+          path === "/agent/muse/reports" ||
           path.startsWith("/reports") ||
           path.startsWith("/moderation") ||
           path === "/me" ||

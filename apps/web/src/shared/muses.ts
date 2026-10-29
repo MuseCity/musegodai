@@ -171,6 +171,19 @@ export type MuseView = {
   asOf: string | null;
   placesAvailable: boolean;
 };
+export type AgentMuseView = {
+  id: number;
+  name: string;
+  page: string;
+  steps: MuseStep[];
+  next: StepId | null;
+  signatures: {
+    kind: "flock_claim";
+    founding: number;
+    address: string;
+    signature: string;
+  }[];
+};
 export type DirectoryItem = {
   id: number;
   name: string;

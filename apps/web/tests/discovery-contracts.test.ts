@@ -1,8 +1,10 @@
 import { beforeEach, expect, it } from "vitest";
 import { z } from "zod";
 import { openapi } from "../src/server/discovery";
+import { withDatabase } from "../src/server/database";
 import { publishScopes } from "../src/shared/contracts";
-import { article, fixture, reset } from "./helpers";
+import { article, config, fixture, reset } from "./helpers";
+import { withMuses } from "./muse-fakes";
 
 const doc = openapi("http://localhost");
 function validate(
@@ -26,6 +28,61 @@ function validate(
   expect(parsed.success, JSON.stringify(parsed.error)).toBe(true);
 }
 beforeEach(reset);
+it("validates bound muse setup, flock signatures and report contracts", async () => {
+  const f = withMuses(fixture());
+  const start = await f.call("/me/muses/1/start", { method: "POST" });
+  const active = await f.call("/agent-connections", {
+    method: "POST",
+    token: null,
+    body: { otp: start.data.otp },
+  });
+  const token = active.data.credential.token;
+  validate("/agent/muse", await f.call("/agent/muse", { token }));
+  validate(
+    "/agent/muse/reports",
+    await f.call("/agent/muse/reports", {
+      method: "POST",
+      token,
+      body: { step: "soul", status: "done" },
+    }),
+    "post",
+  );
+  expect(
+    (
+      await f.call("/agent/muse/reports", {
+        method: "POST",
+        token,
+        body: { step: "flock", status: "done", founding_number: 12 },
+      })
+    ).status,
+  ).toBe(200);
+  await withDatabase(config.testAdminUrl, (d) =>
+    d.query(
+      "INSERT INTO musecity.muse_signatures(id,binding_id,kind,place,line,signer,signature,state) SELECT 'contract-claim',id,'flock_claim','flock','fixed line',holder_address,'0x1234','handed_to_agent' FROM musecity.muse_bindings WHERE ended_at IS NULL",
+    ),
+  );
+  const setup = await f.call("/agent/muse", { token });
+  expect(setup.data.signatures).toHaveLength(1);
+  validate("/agent/muse", setup);
+  const operation = (doc.paths["/agent/muse/reports"] as any).post;
+  expect(operation.parameters).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ name: "Idempotency-Key", required: true }),
+    ]),
+  );
+  const schema = z.fromJSONSchema(
+    operation.requestBody.content["application/json"].schema,
+  );
+  expect(schema.safeParse({ step: "look", status: "skipped" }).success).toBe(
+    true,
+  );
+  for (const body of [
+    { step: "hello", status: "done" },
+    { step: "x", status: "needs_you", code: "arbitrary" },
+    { step: "soul", status: "done", ownerAccountId: "forged" },
+  ])
+    expect(schema.safeParse(body).success).toBe(false);
+});
 it("validates empty/nonempty public directories, mixed search, discovery and scoped feedback responses", async () => {
   const f = fixture();
   validate("/neighbors", await f.call("/neighbors", { token: null }));

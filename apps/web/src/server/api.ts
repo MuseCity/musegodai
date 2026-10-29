@@ -93,6 +93,13 @@ import { chatgptFile, importChatgptImage } from "./chatgpt-media";
 import { musegodOrg, type MusegodServices } from "./musegod";
 import { robinhoodMuseChain, type MuseChain } from "./muse-chain";
 import * as muses from "./muses";
+import { museReportSchema, museSignatureSchema } from "../shared/muses";
+import { agentMuse, reportMuseStep, requireMuseAgent } from "./muse-agent";
+import {
+  authorizeSignature,
+  relayPending,
+  submitSignature,
+} from "./muse-relay";
 export type Services = {
   connectionString: string;
   store: ObjectStore;
@@ -234,17 +241,19 @@ export function createApi(s: Services, mcpCredential?: string) {
     human: boolean,
     body: unknown,
     fn: (d: Database, a: Actor) => Promise<T>,
+    authorize?: (d: Database, a: Actor) => Promise<unknown>,
   ) =>
-    authed(c, scope, human, (d, a) =>
-      deduplicate(
+    authed(c, scope, human, async (d, a) => {
+      await authorize?.(d, a);
+      return deduplicate(
         d,
         a,
         c.req.method + ":" + c.req.path,
         c.req.header("Idempotency-Key") ?? null,
         body,
         () => fn(d, a),
-      ),
-    );
+      );
+    });
   app.use("*", async (c, next) => {
     c.set("requestId", id("req"));
     c.header("X-Request-Id", c.get("requestId"));
@@ -1215,6 +1224,26 @@ export function createApi(s: Services, mcpCredential?: string) {
     c.req.header("authorization")
       ? authed(c, undefined, false, fn)
       : db((d) => fn(d));
+  app.get("/api/v1/agent/muse", async (c) =>
+    c.json(
+      await authed(c, "content:read", false, (d, a) =>
+        agentMuse(d, museDeps(), a),
+      ),
+    ),
+  );
+  app.post("/api/v1/agent/muse/reports", async (c) => {
+    const body = await json(c, museReportSchema);
+    return c.json(
+      await write(
+        c,
+        "content:write",
+        false,
+        body,
+        (d, a) => reportMuseStep(d, museDeps(), a, body),
+        (d, a) => requireMuseAgent(d, museDeps(), a, true),
+      ),
+    );
+  });
   const governanceRead = <T>(
     c: Context<AppEnv>,
     fn: (d: Database, a?: Actor) => Promise<T>,
@@ -1251,13 +1280,35 @@ export function createApi(s: Services, mcpCredential?: string) {
       ),
     ),
   );
-  app.get("/api/v1/me/muses/:id", async (c) =>
-    c.json(
-      await authed(c, undefined, true, (d, a) =>
-        muses.keeperMuse(d, museDeps(), a, museId(c.req.param("id"))),
-      ),
-    ),
-  );
+  app.get("/api/v1/me/muses/:id", async (c) => {
+    const result = await authed(c, undefined, true, (d, a) =>
+      muses.keeperMuse(d, museDeps(), a, museId(c.req.param("id"))),
+    );
+    if (s.waitUntil) s.waitUntil(relayPending(s.connectionString, museDeps()));
+    return c.json(result);
+  });
+  app.post("/api/v1/me/muses/:id/signatures", async (c) => {
+    const body = await json(c, museSignatureSchema);
+    const tokenId = museId(c.req.param("id"));
+    let queued = false;
+    const result = await write(
+      c,
+      "content:write",
+      true,
+      body,
+      async (d, a) => {
+        const inserted = await submitSignature(d, museDeps(), a, tokenId, body);
+        queued = inserted.state === "queued";
+        return inserted;
+      },
+      (d, a) => authorizeSignature(d, museDeps(), a, tokenId, body.signer),
+    );
+    // write() resolves only after COMMIT. A cached retry never reruns its
+    // mutation or schedules another drain from the cached queued response.
+    if (queued && s.waitUntil)
+      s.waitUntil(relayPending(s.connectionString, museDeps()));
+    return c.json(result);
+  });
   app.post("/api/v1/me/muses/:id/start", async (c) =>
     c.json(
       await authed(c, undefined, true, (d, a) =>

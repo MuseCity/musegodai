@@ -10,6 +10,7 @@ import {
   type Scope,
 } from "../src/shared/contracts";
 import { article, fixture, reset } from "./helpers";
+import { withMuses } from "./muse-fakes";
 
 const clients: Client[] = [];
 beforeEach(reset);
@@ -96,6 +97,55 @@ async function control(
 }
 
 describe("MCP over Streamable HTTP with the real local PostgreSQL API", () => {
+  it("discovers scoped muse tools and shares report bodies and idempotency with REST", async () => {
+    const f = withMuses(fixture());
+    const start = await f.call("/me/muses/1/start", { method: "POST" });
+    const active = await f.call("/agent-connections", {
+      method: "POST",
+      token: null,
+      body: { otp: start.data.otp },
+    });
+    const token = active.data.credential.token;
+    const client = await connect(f, token);
+    const tools = (await client.listTools()).tools;
+    for (const [name, scope, readOnly] of [
+      ["get_muse_setup", "content:read", true],
+      ["report_muse_step", "content:write", false],
+    ] as const) {
+      const tool = tools.find((tool) => tool.name === name)!;
+      expect(tool).toBeDefined();
+      expect(tool._meta?.securitySchemes).toEqual([
+        { type: "oauth2", scopes: [scope] },
+      ]);
+      expect(tool.annotations).toMatchObject({
+        readOnlyHint: readOnly,
+        idempotentHint: true,
+      });
+    }
+    expect((await call(client, "get_muse_setup")).data).toMatchObject({
+      httpStatus: 200,
+      id: 1,
+      name: "Bard",
+    });
+    const body = { step: "soul", status: "done" },
+      idempotencyKey = crypto.randomUUID();
+    const reported = await call(client, "report_muse_step", {
+      ...body,
+      idempotencyKey,
+    });
+    const rest = await f.call("/agent/muse/reports", {
+      method: "POST",
+      token,
+      body,
+      key: idempotencyKey,
+    });
+    expect(reported.data).toEqual({ httpStatus: rest.status, ...rest.data });
+    expect(reported.data).toEqual({ httpStatus: 200, accepted: true });
+    expect((await call(client, "get_muse_setup")).data.steps[0]).toMatchObject({
+      status: "done",
+      source: "reported",
+    });
+  });
   it("shares website markers and verification with REST under publishing permissions", async () => {
     const f = fixture(),
       ag = await activate(f, publishScopes),
