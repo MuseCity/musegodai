@@ -222,6 +222,22 @@ describe("shared muse vocabulary", () => {
         museSignatureSchema.safeParse({ ...body, ...change }).success,
       ).toBe(false);
   });
+
+  it("caps report URLs at 512 characters", () => {
+    const prefix = "https://musebook.me/";
+    const url = prefix + "a".repeat(512 - prefix.length);
+    expect(
+      museReportSchema.safeParse({ step: "musebook", status: "done", url })
+        .success,
+    ).toBe(true);
+    expect(
+      museReportSchema.safeParse({
+        step: "musebook",
+        status: "done",
+        url: url + "a",
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("muse setup facts", () => {
@@ -436,6 +452,70 @@ describe("muse setup facts", () => {
       }).sign[0]?.kind,
     ).toBe("flock_claim");
     expect(needsYou({ ...facts, worlds: null }).sign).toEqual([]);
+  });
+
+  it("offers a Terrakin badge signature when the reported URL changes", () => {
+    const result = needsYou({
+      ...facts,
+      terrakinBadge: "https://terrakin.org/r/r_fedcba9876543210",
+    });
+    expect(result.sign).toContainEqual({
+      kind: "muse_link",
+      place: "terrakin",
+      line: museLinkLine(417, terrakin, now),
+      at: now,
+    });
+    expect(
+      needsYou({ ...facts, terrakinBadge: terrakin }).sign.some(
+        (line) => line.kind === "muse_link",
+      ),
+    ).toBe(false);
+  });
+
+  it("clears OpenSea linking requests only when the world is linked and current", () => {
+    const wallet = "0x" + "56".repeat(20);
+    const reports = {
+      opensea: {
+        url: null,
+        founding: null,
+        code: "opensea_link" as const,
+        wallet,
+      },
+    };
+    for (const linked of [false, true])
+      for (const current of [false, true])
+        expect(
+          needsYou({
+            ...facts,
+            reports,
+            worlds: { opensea: { linked, current, url: null } },
+          }).openseaLink,
+        ).toBe(linked && current ? null : wallet);
+  });
+
+  it("ignores verification requests for confirmed worlds but keeps pending ones", () => {
+    const report = {
+      url: null,
+      founding: null,
+      code: "verification_code" as const,
+      wallet: null,
+    };
+    for (const linked of [false, true])
+      for (const current of [false, true])
+        expect(
+          needsYou({
+            ...facts,
+            reports: { x: report },
+            worlds: { x: { linked, current, url: null } },
+          }).verificationCode,
+        ).toBe(!(linked && current));
+    expect(
+      needsYou({
+        ...facts,
+        reports: { x: report, musebook: report },
+        worlds: { x: { linked: true, current: true, url: null } },
+      }).verificationCode,
+    ).toBe(true);
   });
 
   it("derives OpenSea, verification and weekly pot requests from facts", () => {

@@ -350,7 +350,7 @@ Rules:
 - Routes: `GET /api/v1/agent/muse` (`authed(c, "content:read", false, …)`), `POST /api/v1/agent/muse/reports` (`write(c, "content:write", false, body, …)`). Both require `a.agent` with an active binding, else 403 `MUSE_NOT_BOUND`.
 - MCP: `get_muse_setup` → `GET /agent/muse`; `report_muse_step` → `POST /agent/muse/reports` (write, idempotent, add to the `content:write` list).
 
-Validation: `url` must pass `placePageValid` (→ 400 `invalid_place_url`); `founding_number` must exist and `musegod.founding(n).name` must equal the muse name, case-insensitively (→ 400 `invalid_founding_number`); `step: "hiveverse"`, `"movein"` or `"hello"` → 400 `VALIDATION_ERROR`. A report upserts by `(binding_id, step)`. A new `url` or `founding_number` for a place marks that place's `queued` lines `superseded`. Every accepted report calls `audit(d, a, "muse.report", bindingId)`.
+Validation: `url` must pass `placePageValid` (→ 400 `invalid_place_url`); `founding_number` must exist and `musegod.founding(n).name` must equal the muse name, case-insensitively (→ 400 `invalid_founding_number`); `step: "hiveverse"`, `"movein"` or `"hello"` → 400 `VALIDATION_ERROR`. A report upserts by `(binding_id, step)`. A new `url` or `founding_number` for a place (different from the stored one) marks that place's `queued`, `sent` and `handed_to_agent` lines `superseded`, so the keeper is asked to sign the new value. Every accepted report calls `audit(d, a, "muse.report", bindingId)`.
 
 - [ ] **Step 1: Write the failing tests**
   - `only bound Agents may call` — an Agent connected the ordinary way → 403 `MUSE_NOT_BOUND` on both.

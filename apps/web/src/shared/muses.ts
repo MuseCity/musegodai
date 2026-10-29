@@ -105,7 +105,7 @@ export const museReportSchema = z
       "x",
     ]),
     status: z.enum(["done", "needs_you", "skipped"]),
-    url: z.string().optional(),
+    url: z.string().max(512).optional(),
     founding_number: z.number().int().positive().optional(),
     wallet_address: addressSchema.optional(),
     code: z.enum(reportCodes).optional(),

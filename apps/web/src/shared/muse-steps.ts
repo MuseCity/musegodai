@@ -130,7 +130,7 @@ export function needsYou(f: NeedsFacts): NeedsYou {
         at: f.now,
       });
     const terrakin = f.reports.terrakin?.url;
-    if (terrakin && f.terrakinBadge === null)
+    if (terrakin && terrakin !== f.terrakinBadge)
       offer({
         kind: "muse_link",
         place: "terrakin",
@@ -141,11 +141,15 @@ export function needsYou(f: NeedsFacts): NeedsYou {
   return {
     sign,
     openseaLink:
-      f.reports.opensea?.code === "opensea_link"
+      f.reports.opensea?.code === "opensea_link" &&
+      !(f.worlds?.opensea?.linked && f.worlds.opensea.current)
         ? f.reports.opensea.wallet
         : null,
-    verificationCode: Object.values(f.reports).some(
-      (report) => report.code === "verification_code",
+    verificationCode: placeIds.some(
+      (place) =>
+        place !== "hiveverse" &&
+        f.reports[place]?.code === "verification_code" &&
+        !(f.worlds?.[place]?.linked && f.worlds[place].current),
     ),
     pot:
       !f.potEntered && f.potCloses !== null && f.potCloses > f.now
