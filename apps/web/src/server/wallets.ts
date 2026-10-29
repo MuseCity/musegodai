@@ -6,7 +6,12 @@ import {
   isAddress,
   type Address,
 } from "viem";
-import { robinhoodEndpoints, retryableRpc } from "./rpc";
+import {
+  robinhoodEndpoints,
+  retryableRpc,
+  rpcCauses,
+  logRpcFallback,
+} from "./rpc";
 import {
   governanceRules,
   type GovernanceRules,
@@ -131,11 +136,14 @@ export function privyWalletServices(
       }
     },
     async balance(address, rules) {
+      let endpointLabel = "public";
       try {
         // Keep the batch request-scoped. A shared scheduler can combine I/O
         // owned by different Cloudflare Worker request contexts.
         const endpoints = robinhoodEndpoints(rpcUrl);
         for (const [index, endpoint] of endpoints.entries()) {
+          endpointLabel =
+            endpoints.length > 1 && index === 0 ? "configured" : "public";
           try {
             const response = await fetch(endpoint, {
               method: "POST",
@@ -212,12 +220,19 @@ export function privyWalletServices(
               index === endpoints.length - 1
             )
               throw error;
+            logRpcFallback(error);
           }
         }
         throw new Error("No RPC endpoint available.");
-      } catch {
+      } catch (error) {
         // Never include provider messages, URLs, payloads or wallet addresses.
-        console.error(JSON.stringify({ event: "wallet.balance.failed" }));
+        console.error(
+          JSON.stringify({
+            event: "wallet.balance.failed",
+            endpoint: endpointLabel,
+            causes: rpcCauses(error),
+          }),
+        );
         throw new ApiError(
           503,
           "RPC_UNAVAILABLE",

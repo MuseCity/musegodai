@@ -31,6 +31,7 @@ const linked = {
 };
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 const transfer: Transfer = {
@@ -271,17 +272,33 @@ describe("wallet provenance and current on-chain qualification", () => {
       { code: "RPC_UNAVAILABLE" },
     );
   });
-  it.each([429, 503, "network", "timeout"] as const)(
+  it.each([429, 503, "network", "timeout", "code", "rpc"] as const)(
     "balance falls back from configured RPC on %s",
     async (failure) => {
       const endpoint = "https://rpc.example.test/fake-key";
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       vi.stubGlobal(
         "fetch",
         vi.fn(async (input: RequestInfo | URL) => {
           if (String(input) === endpoint) {
-            if (failure === "network") throw new TypeError("offline");
+            if (failure === "network")
+              throw Object.assign(new TypeError(endpoint), {
+                name: endpoint,
+                code: endpoint,
+              });
             if (failure === "timeout")
-              throw new DOMException("timeout", "TimeoutError");
+              throw new DOMException(endpoint, "TimeoutError");
+            if (failure === "code")
+              throw new Error(endpoint, { cause: { code: "ECONNRESET" } });
+            if (failure === "rpc")
+              return Response.json([
+                { jsonrpc: "2.0", id: 1, result: "0x1237" },
+                {
+                  jsonrpc: "2.0",
+                  id: 2,
+                  error: { code: 429, message: endpoint },
+                },
+              ]);
             return new Response(null, { status: failure });
           }
           return Response.json([
@@ -301,12 +318,25 @@ describe("wallet provenance and current on-chain qualification", () => {
         endpoint,
         "https://rpc.mainnet.chain.robinhood.com",
       ]);
+      expect(warn.mock.calls).toEqual([
+        [
+          JSON.stringify({
+            event: "rpc.fallback",
+            from: "configured",
+            ...(typeof failure === "number" ? { status: failure } : {}),
+            ...(failure === "code" ? { code: "ECONNRESET" } : {}),
+            ...(failure === "rpc" ? { code: 429 } : {}),
+            ...(failure === "timeout" ? { code: 23 } : {}),
+          }),
+        ],
+      ]);
     },
   );
 
   it("does not fall back on non-retryable HTTP, JSON-RPC errors, malformed replies or wrong networks", async () => {
     const endpoint = "https://rpc.example.test/fake-key";
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       for (const failure of [
         400,
@@ -352,6 +382,7 @@ describe("wallet provenance and current on-chain qualification", () => {
         expect(fetch).toHaveBeenCalledTimes(1);
       }
       expect(JSON.stringify(log.mock.calls)).not.toContain(endpoint);
+      expect(warn).not.toHaveBeenCalled();
     } finally {
       log.mockRestore();
     }
@@ -360,6 +391,7 @@ describe("wallet provenance and current on-chain qualification", () => {
   it("keeps stable sanitized errors when both endpoints fail", async () => {
     const endpoint = "https://rpc.example.test/fake-key";
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       vi.stubGlobal(
         "fetch",
@@ -379,12 +411,74 @@ describe("wallet provenance and current on-chain qualification", () => {
         String(error) + JSON.stringify(error) + JSON.stringify(log.mock.calls),
       ).not.toContain(endpoint);
       expect(fetch).toHaveBeenCalledTimes(2);
+      expect(log.mock.calls).toEqual([
+        [
+          JSON.stringify({
+            event: "wallet.balance.failed",
+            endpoint: "public",
+            causes: [{ name: "TypeError" }],
+          }),
+        ],
+      ]);
+      expect(warn.mock.calls).toEqual([
+        [JSON.stringify({ event: "rpc.fallback", from: "configured" })],
+      ]);
     } finally {
       log.mockRestore();
     }
   });
 
+  it.each(["configured", "public"] as const)(
+    "retains at most five sanitized causes for a failed %s endpoint",
+    async (endpoint) => {
+      const secret = "https://rpc.example.test/fake-key";
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      const metadata = [
+        { name: "Error", status: 401, code: -32602 },
+        { name: "TypeError", code: "ECONNRESET" },
+        { name: "TimeoutError" },
+        { name: secret, status: secret, code: secret },
+        { name: "Error" },
+        { name: "Error", code: -32000 },
+      ];
+      let error: unknown;
+      for (const cause of [...metadata].reverse())
+        error = { ...cause, message: secret, cause: error };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          throw error;
+        }),
+      );
+      await expect(
+        privyWalletServices(
+          "local-app",
+          "local-secret",
+          endpoint === "configured" ? secret : undefined,
+        ).balance(owner, governanceRules),
+      ).rejects.toMatchObject({ status: 503, code: "RPC_UNAVAILABLE" });
+      expect(log.mock.calls).toEqual([
+        [
+          JSON.stringify({
+            event: "wallet.balance.failed",
+            endpoint,
+            causes: [
+              metadata[0],
+              metadata[1],
+              metadata[2],
+              { name: "Error" },
+              metadata[4],
+            ],
+          }),
+        ],
+      ]);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+    },
+  );
+
   it("uses configured HTTPS first and skips non-HTTPS configuration", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     rpcMock((r) =>
       r.method === "eth_chainId" ? "0x1237" : "0x" + "0".repeat(64),
     );
@@ -404,6 +498,7 @@ describe("wallet provenance and current on-chain qualification", () => {
       "https://rpc.example.test/fake-key",
       "https://rpc.mainnet.chain.robinhood.com",
     ]);
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 describe("wallet transfer safety and status", () => {

@@ -15,7 +15,7 @@ import {
 import { robinhood } from "../shared/chains";
 import { adapter8004, museContract } from "../shared/muses";
 import { ApiError, requireValue } from "./errors";
-import { robinhoodEndpoints, retryableRpc } from "./rpc";
+import { robinhoodEndpoints, retryableRpc, logRpcFallback } from "./rpc";
 
 export type MuseChain = {
   headBlock(): Promise<bigint>;
@@ -57,8 +57,9 @@ export function robinhoodMuseChain(rpcUrl?: string): MuseChain {
       chain: robinhood,
       batch: { multicall: false },
       transport: (options) => {
+        const endpoints = robinhoodEndpoints(rpcUrl);
         const transport = fallback(
-          robinhoodEndpoints(rpcUrl).map((endpoint) =>
+          endpoints.map((endpoint) =>
             http(endpoint, {
               batch: false,
               timeout: 8_000,
@@ -79,6 +80,15 @@ export function robinhoodMuseChain(rpcUrl?: string): MuseChain {
             shouldThrow: (error) => !retryableRpc(error),
           },
         )(options);
+        transport.value?.onResponse(({ status, error, transport: source }) => {
+          if (
+            status === "error" &&
+            endpoints.length > 1 &&
+            source.value?.url === endpoints[0] &&
+            retryableRpc(error)
+          )
+            logRpcFallback(error);
+        });
         const request = ((...args: Parameters<typeof transport.request>) =>
           transport.request(...args).catch((error: unknown) => {
             onError?.(error);

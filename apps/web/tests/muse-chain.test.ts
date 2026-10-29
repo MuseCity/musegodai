@@ -46,6 +46,7 @@ const bool = (value: boolean) =>
   encodeAbiParameters([{ type: "bool" }], [value]);
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -137,6 +138,7 @@ describe("Robinhood muse chain reads", () => {
   });
 
   it("drops malformed and non-HTTPS configuration and uses only the public endpoint", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const requests = rpcMock((r) =>
       r.method === "eth_chainId"
         ? "0x1237"
@@ -156,12 +158,14 @@ describe("Robinhood muse chain reads", () => {
           ([url]) => String(url) === "https://rpc.mainnet.chain.robinhood.com/",
         ),
     ).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it.each([429, 500, 503, "network", "timeout"] as const)(
+  it.each([429, 500, 503, "network", "timeout", "code", "rpc"] as const)(
     "falls back from configured RPC on %s, with configured first for every read",
     async (failure) => {
       const endpoint = "https://rpc.example.test/fake-key";
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const urls: string[] = [];
       vi.stubGlobal(
         "fetch",
@@ -169,9 +173,23 @@ describe("Robinhood muse chain reads", () => {
           const url = String(input);
           urls.push(url);
           if (url === endpoint) {
-            if (failure === "network") throw new TypeError("offline");
+            if (failure === "network")
+              throw Object.assign(new TypeError(endpoint), {
+                name: endpoint,
+                code: endpoint,
+              });
             if (failure === "timeout")
-              throw new DOMException("timeout", "TimeoutError");
+              throw new DOMException(endpoint, "TimeoutError");
+            if (failure === "code")
+              throw new Error(endpoint, { cause: { code: "ECONNRESET" } });
+            if (failure === "rpc") {
+              const r = JSON.parse(String(init?.body));
+              return Response.json({
+                jsonrpc: "2.0",
+                id: r.id,
+                error: { code: 429, message: endpoint },
+              });
+            }
             return new Response(null, { status: failure });
           }
           const r = JSON.parse(String(init?.body));
@@ -192,12 +210,22 @@ describe("Robinhood muse chain reads", () => {
         endpoint,
         "https://rpc.mainnet.chain.robinhood.com/",
       ]);
+      const expected = JSON.stringify({
+        event: "rpc.fallback",
+        from: "configured",
+        ...(typeof failure === "number" ? { status: failure } : {}),
+        ...(failure === "code" ? { code: "ECONNRESET" } : {}),
+        ...(failure === "rpc" ? { code: 429 } : {}),
+        ...(failure === "timeout" ? { code: 23 } : {}),
+      });
+      expect(warn.mock.calls).toEqual([[expected], [expected]]);
     },
   );
 
   it("does not fall back on HTTP 400 or JSON-RPC validation errors and sanitizes all failures", async () => {
     const endpoint = "https://rpc.example.test/fake-key";
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       for (const failure of [400, 401, 403, "rpc", "both"] as const) {
         vi.stubGlobal(
@@ -224,6 +252,15 @@ describe("Robinhood muse chain reads", () => {
         expect(fetch).toHaveBeenCalledTimes(failure === "both" ? 2 : 1);
       }
       expect(JSON.stringify(log.mock.calls)).not.toContain(endpoint);
+      expect(warn.mock.calls).toEqual([
+        [
+          JSON.stringify({
+            event: "rpc.fallback",
+            from: "configured",
+            status: 503,
+          }),
+        ],
+      ]);
     } finally {
       log.mockRestore();
     }
