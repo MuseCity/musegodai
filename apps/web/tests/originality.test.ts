@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { config, fixture, reset } from "./helpers";
 import { withDatabase } from "../src/server/database";
 import { draftScopes, publishScopes } from "../src/shared/contracts";
@@ -515,7 +515,11 @@ describe("website originality through real local PostgreSQL with injected webpag
     gate3.release();
     expect((await pendingChanged).status).toBe(409);
   });
-  it("shares the ten-check budget across a household while allowing ordinary publication", async () => {
+  it("shares the ten-check budget across a household while allowing ordinary publication", async ({
+    onTestFinished,
+  }) => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    onTestFinished(() => now.mockRestore());
     const f = fixture(),
       ag = await activate(f),
       work = await draft(f, ag.token);
