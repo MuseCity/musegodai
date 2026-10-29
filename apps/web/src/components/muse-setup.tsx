@@ -1,3 +1,6 @@
+import { useId, useState } from "react";
+import { Notice } from "./ui";
+import { museInvite } from "../shared/muses";
 import { Link } from "react-router";
 import type {
   DirectoryItem,
@@ -5,6 +8,66 @@ import type {
   MuseView,
   StepId,
 } from "../shared/muses";
+
+export function MuseInvite({ compact = false }: { compact?: boolean }) {
+  const heading = useId();
+  const [inviteCopy, setInviteCopy] = useState<"" | "copied" | "failed">("");
+  const Container = compact ? "section" : "div";
+  async function copyInvite() {
+    setInviteCopy("");
+    try {
+      await navigator.clipboard.writeText(museInvite.code);
+      setInviteCopy("copied");
+    } catch {
+      setInviteCopy("failed");
+    }
+  }
+  return (
+    <Container
+      className={compact ? "muse-panel muse-invite-panel" : undefined}
+      aria-labelledby={compact ? heading : undefined}
+      data-muse-invite=""
+    >
+      {compact && <h2 id={heading}>Get Muse</h2>}
+      <p>
+        <a
+          className="text-link"
+          href={museInvite.url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          open muse.ai ↗
+        </a>{" "}
+        <span className="muse-note">· skip if you have it.</span>
+      </p>
+      <div className="muse-invite">
+        <p className="muse-note">
+          Invite code {museInvite.code}: redeem it in Muse Settings within 48
+          hours of joining. You and the musegod.ai team each get 1 billion Muse
+          tokens.
+        </p>
+        <button
+          type="button"
+          className="text-link"
+          data-muse-invite-copy
+          onClick={() => void copyInvite()}
+        >
+          copy code
+        </button>
+        {inviteCopy === "copied" && (
+          <p className="muse-note" role="status">
+            Code copied
+          </p>
+        )}
+        {inviteCopy === "failed" && (
+          <Notice>
+            Copy failed. Select the invite code above and copy it manually.
+          </Notice>
+        )}
+      </div>
+    </Container>
+  );
+}
 
 // Place records are external input. Only generated post paths and HTTPS pages
 // can become evidence links; a reported URL is never executable page content.

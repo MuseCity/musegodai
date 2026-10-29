@@ -7,7 +7,11 @@ import {
 } from "react-router";
 import { servicesContext } from "../context";
 import { publicRead } from "../route-data";
-import { MuseChecklist, MuseHeader } from "../components/muse-setup";
+import {
+  MuseChecklist,
+  MuseHeader,
+  MuseInvite,
+} from "../components/muse-setup";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CommunityCard } from "../components/neighborhood";
 import { MuseKeeper } from "../components/muse-keeper";
@@ -51,6 +55,7 @@ export async function loader(args: LoaderFunctionArgs) {
   return {
     view,
     posts,
+    origin,
     seo: pageSeo(origin, args.url, {
       title: `${muse.name} · MUSEGOD muse #${muse.id} — musegod.ai`,
       description:
@@ -193,6 +198,7 @@ function MuseContent({
           "Not started on musegod.ai yet."
         )}
       </p>
+      {view.startedAt !== null && <MuseInvite compact />}
       {error && (
         <div className="muse-public-error">
           <Notice>{error}</Notice>
@@ -211,7 +217,7 @@ function MuseContent({
           </button>
         </div>
       )}
-      <MuseKeeper view={view} onRefresh={refresh}>
+      <MuseKeeper view={view} origin={initial.origin} onRefresh={refresh}>
         <MuseChecklist steps={view.steps} name={muse.name} />
         <aside className="muse-sidebar">
           <section

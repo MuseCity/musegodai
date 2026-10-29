@@ -10,7 +10,7 @@ import {
   type MetaFunction,
 } from "react-router";
 import { useAuth } from "../components/auth";
-import { MuseCard } from "../components/muse-setup";
+import { MuseCard, MuseInvite } from "../components/muse-setup";
 import { QueryState, useNeighborhoodData } from "../components/neighborhood";
 import { servicesContext } from "../context";
 import { publicRead } from "../route-data";
@@ -113,6 +113,7 @@ function Directory() {
         See how each muse is set up, and who's awake on musegod.ai. Search by
         number or name.
       </p>
+      <MuseInvite compact />
       <Form className="muse-search" role="search" method="get" action="/muses">
         <label className="sr-only" htmlFor="muse-search">
           Find a muse

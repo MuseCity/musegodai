@@ -8,6 +8,12 @@ import {
   ownershipUnavailableMessage,
 } from "../src/shared/muses.ts";
 
+import {
+  checkPublicMuseGuide,
+  checkPublicMuseInvite,
+  exerciseMuseInviteCopy,
+} from "./muse-guide-checks.mjs";
+
 const origin = "http://127.0.0.1:5191";
 const redirect = await fetch(origin + "/muses/bard", { redirect: "manual" });
 assert.equal(redirect.status, 301, "Bard's name reference redirects with 301");
@@ -151,6 +157,14 @@ function ready(condition, timeout = 15000) {
     `(async()=>{const end=Date.now()+${timeout};while(!(${condition})){if(Date.now()>end)throw Error("Muse page did not become ready");await new Promise(r=>setTimeout(r,50));}return true})()`,
   );
 }
+function publicInvite(layout) {
+  evaluate(
+    `(${checkPublicMuseInvite.toString()})(${JSON.stringify({ invite: museInvite, layout })})`,
+  );
+  evaluate(
+    `(${exerciseMuseInviteCopy.toString()})(${JSON.stringify(museInvite)})`,
+  );
+}
 function noErrors() {
   const errors = browser("errors");
   assert.ok(!errors.errors?.length, JSON.stringify(errors));
@@ -253,94 +267,108 @@ try {
   opened = true;
   settleLayout();
   const name = evaluate('document.querySelector("h1").textContent');
-  assert.equal(
-    evaluate('document.querySelector(".muse-keeper-prompt h2")?.textContent'),
-    `Is ${name} yours?`,
-  );
-  assert.equal(
-    evaluate('document.querySelector(".muse-keeper-prompt p")?.textContent'),
-    `Connect the wallet that holds ${name} to wake it up. Your Muse does the rest.`,
-  );
-  assert.equal(
-    evaluate('document.querySelectorAll(".muse-visitor-cta").length'),
-    0,
-  );
-  assert.equal(
-    evaluate('document.querySelectorAll(".muse-keeper-prompt").length'),
-    1,
-  );
-  assert.ok(
+  browser("set", "viewport", "375", "812");
+  const publicGuide = (state, message) =>
     evaluate(
-      'document.querySelector(".muse-started").nextElementSibling.matches(".muse-keeper-prompt")',
-    ),
+      `(${checkPublicMuseGuide.toString()})(${JSON.stringify({ id: 259, name, origin, invite: museInvite, state, message })})`,
+    );
+  publicGuide("signed-out");
+  publicInvite("unstarted");
+  evaluate(
+    "window.__publicInviteCopies=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>window.__publicInviteCopies.push(text)}})",
   );
-  keyboardReachable(".muse-keeper-prompt button");
+  browser("click", "[data-muse-invite-copy]");
+  ready(
+    'document.querySelector(".muse-invite [role=status]")?.textContent==="Code copied"',
+  );
+  assert.deepEqual(evaluate("window.__publicInviteCopies"), [museInvite.code]);
+  publicGuide("signed-out");
+  keyboardReachable(".muse-start a, .muse-start button");
   evaluate(`(()=>{window.__hotfixReads=0;window.__hotfixReleases=[];window.__walletLinks=[];window.addEventListener('fixture-link',e=>window.__walletLinks.push(e.detail));window.__hotfixMode='delay';const original=window.fetch;window.fetch=async(input,init)=>{
     if(new URL(typeof input==='string'?input:input.url,location.href).pathname==='/api/v1/me/muses/259'){
       window.__hotfixReads++;
       if(window.__hotfixMode==='delay')await new Promise(resolve=>window.__hotfixReleases.push(resolve));
+      if(window.__hotfixMode==='other-error')return Response.json({error:{code:'LOCAL_KEEPER_FAILURE',message:'Local keeper check unavailable.'}},{status:503});
       if(window.__hotfixMode==='error')return Response.json({error:{code:'OWNERSHIP_UNAVAILABLE',message:'Local keeper check unavailable.'}},{status:503});
     }
     return original(input,init);
   };return true})()`);
-  browser("click", ".muse-keeper-prompt .primary");
+  browser("click", ".muse-keeper-access .primary");
   ready(
-    'window.__hotfixReads>=1 && document.querySelector(".muse-keeper-prompt [role=status]")',
+    'window.__hotfixReads>=1 && document.querySelector(".muse-keeper-access [role=status]")',
   );
   assert.equal(
     evaluate(
-      'document.querySelector(".muse-keeper-prompt [role=status]").textContent',
+      'document.querySelector(".muse-keeper-access [role=status]").textContent',
     ),
     `Checking whether you hold ${name}…`,
   );
+  publicGuide("checking");
   const initialKeeperReads = evaluate("window.__hotfixReads");
   evaluate(
     "window.__hotfixMode='normal';window.__hotfixReleases.forEach(resolve=>resolve())",
   );
-  ready('document.querySelector(".muse-keeper-prompt .primary")');
+  ready('document.querySelector(".muse-keeper-access .primary")');
   assert.equal(
-    evaluate('document.querySelector(".muse-keeper-prompt p").textContent'),
+    evaluate('document.querySelector(".muse-keeper-access p").textContent'),
     `None of the wallets on your account holds ${name}.`,
   );
   assert.equal(
     evaluate(
-      'document.querySelector(".muse-keeper-prompt .primary").textContent',
+      'document.querySelector(".muse-keeper-access .primary").textContent',
     ),
     `Connect the wallet that holds ${name}`,
   );
-  browser("click", ".muse-keeper-prompt .primary");
+  publicGuide("non-keeper");
+  browser("click", "[data-muse-invite-copy]");
+  ready(
+    'document.querySelector(".muse-invite [role=status]")?.textContent==="Code copied"',
+  );
+  assert.deepEqual(evaluate("window.__publicInviteCopies"), [
+    museInvite.code,
+    museInvite.code,
+  ]);
+  keyboardReachable(".muse-start a, .muse-start button", true);
+  publicGuide("non-keeper");
+  browser("click", ".muse-keeper-access .primary");
   assert.deepEqual(evaluate("window.__walletLinks"), ["wallet"]);
   evaluate("window.__hotfixMode='error'");
-  browser("click", ".muse-keeper-prompt .secondary");
+  browser("click", ".muse-keeper-access .secondary");
   ready(
-    `document.querySelector(".muse-keeper-prompt").textContent.includes(${JSON.stringify(ownershipUnavailableMessage)})`,
+    `document.querySelector(".muse-keeper-access").textContent.includes(${JSON.stringify(ownershipUnavailableMessage)})`,
   );
   assert.equal(
     evaluate(
-      'document.querySelector(".muse-keeper-prompt .primary").textContent',
+      'document.querySelector(".muse-keeper-access .primary").textContent',
     ),
     "Try again",
   );
+  publicGuide("ownership-error", ownershipUnavailableMessage);
   evaluate("window.__hotfixMode='normal'");
-  browser("click", ".muse-keeper-prompt .primary");
+  browser("click", ".muse-keeper-access .primary");
   ready(
-    'document.querySelector(".muse-keeper-prompt .secondary")?.textContent==="Check again"',
+    'document.querySelector(".muse-keeper-access .secondary")?.textContent==="Check again"',
   );
   assert.equal(evaluate("window.__hotfixReads"), initialKeeperReads + 2);
+  evaluate("window.__hotfixMode='other-error'");
+  browser("click", ".muse-keeper-access .secondary");
+  ready('document.querySelector(".muse-keeper-access [role=alert]")');
+  publicGuide("error", "Local keeper check unavailable.");
+  evaluate("window.__hotfixMode='normal'");
+  browser("click", ".muse-keeper-access .primary");
+  ready('document.querySelector(".muse-keeper-access .secondary")');
   assert.equal(
-    evaluate(
-      'document.querySelector(".muse-keeper-prompt a").getAttribute("href")',
-    ),
+    evaluate('document.querySelector(".muse-find a").getAttribute("href")'),
     "/muses?filter=mine",
   );
   noErrors();
   passed.push(
-    "HF1: prominent visitor panel at #259, wallet login, delayed keeper status, non-keeper wallet linking, Check again, error and Try again",
+    "Public guide at #259: three steps, invite and distinct placeholder for signed-out/loading/non-keeper/ownership-error/other-error states; no code, start request or live list; wallet login/link/recheck/retry and 375px keyboard access",
   );
   evaluate("sessionStorage.removeItem('musecity.fixture-user')");
   browser("open", origin + "/muses/259");
   settleLayout();
-  browser("click", ".muse-keeper-prompt .text-link");
+  browser("click", ".muse-find .text-link");
   ready('sessionStorage.getItem("musecity.fixture-user")==="alice"');
   assert.equal(
     evaluate("location.pathname+location.search"),
@@ -390,6 +418,11 @@ try {
     ),
     "Woke up",
   );
+  evaluate(
+    `(${checkPublicMuseGuide.toString()})(${JSON.stringify({ id: 1, name: "Bard", origin, invite: museInvite, state: "signed-out", started: true })})`,
+  );
+  publicInvite("started");
+  keyboardReachable(".muse-invite-panel a, .muse-invite-panel button");
   shortEvidenceLinks();
   assert.equal(
     evaluate(
@@ -423,6 +456,10 @@ try {
   );
   browser("open", origin + "/muses");
   ready('document.querySelectorAll(".muse-card").length===999');
+  publicInvite("directory");
+  passed.push(
+    "signed-out invite on unstarted muse, started muse and directory: one block, exact shared text/link, clipboard success/denial/recovery without an Agent code, compact placement and keyboard access",
+  );
   keyboardReachable(".muse-directory a, .muse-directory button");
   browser("fill", "#muse-search", "bard");
   browser("click", '.muse-search button[type="submit"]');
@@ -574,20 +611,18 @@ try {
   );
   assert.equal(
     evaluate(
-      'document.querySelector(".muse-keeper-prompt").textContent.includes("Sign in")',
+      'document.querySelector(".muse-keeper-access").textContent.includes("Sign in")',
     ),
     false,
     "signed-in non-keepers are asked to link a wallet, not sign in",
   );
   assert.ok(
     evaluate(
-      'document.querySelector(".muse-keeper-prompt").textContent.includes("Connect the wallet that holds Bard")',
+      'document.querySelector(".muse-keeper-access").textContent.includes("Connect the wallet that holds Bard")',
     ),
   );
   assert.equal(
-    evaluate(
-      'document.querySelector(".muse-keeper-prompt a").getAttribute("href")',
-    ),
+    evaluate('document.querySelector(".muse-find a").getAttribute("href")'),
     "/muses?filter=mine",
   );
   evaluate("sessionStorage.setItem('musecity.fixture-user','alice')");
@@ -599,7 +634,7 @@ try {
   );
   browser("set", "viewport", "375", "812");
   browser("open", origin + "/muses/1");
-  ready('document.querySelector(".muse-start")');
+  ready('document.querySelector(".muse-start [data-muse-copy=line]")');
   assert.ok(
     evaluate(
       'document.querySelector(".muse-start").textContent.includes("Finish your profile so Bard\'s card and posts show on its page")',
@@ -963,17 +998,15 @@ try {
   evaluate("window.__museDeny=true");
   browser("click", ".muse-keeper-refresh");
   ready(
-    'document.querySelector(".muse-keeper-prompt")?.textContent.includes("Connect the wallet that holds Bard")',
+    '!document.querySelector(".muse-start") && !document.querySelector(".muse-keeper-refresh")',
   );
-  assert.equal(
-    evaluate(
-      'document.querySelector(".muse-keeper-refresh").textContent.trim()',
-    ),
-    "Check again",
+  evaluate(
+    `(${checkPublicMuseGuide.toString()})(${JSON.stringify({ id: 1, name: "Bard", origin, invite: museInvite, state: "non-keeper", started: true })})`,
   );
   evaluate("window.__museDeny=false");
-  browser("click", ".muse-keeper-refresh");
-  ready('document.querySelector(".muse-start")');
+  browser("click", '[data-testid="fixture-banner"] button');
+  browser("click", '[data-testid="fixture-banner"] button');
+  ready('document.querySelector(".muse-start [data-muse-restart]")');
   evaluate("window.__museLimit=true");
   browser("click", ".muse-keeper-refresh");
   ready(

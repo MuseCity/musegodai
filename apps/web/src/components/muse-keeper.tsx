@@ -10,7 +10,8 @@ import { useAuth } from "./auth";
 import { ClientError, errorMessage, useApi } from "./api";
 import { Notice } from "./ui";
 import type { Profile } from "../shared/contracts";
-import { museInvite, ownershipUnavailableMessage } from "../shared/muses";
+import { ownershipUnavailableMessage } from "../shared/muses";
+import { MuseInvite } from "./muse-setup";
 import type {
   KeeperView,
   MuseView,
@@ -20,10 +21,12 @@ import type {
 
 export function MuseKeeper({
   view,
+  origin,
   onRefresh,
   children,
 }: {
   view: MuseView;
+  origin: string;
   onRefresh: (background?: boolean) => Promise<void>;
   children: ReactNode;
 }) {
@@ -49,7 +52,6 @@ export function MuseKeeper({
   const [copyError, setCopyError] = useState("");
   const [fallback, setFallback] = useState("");
   const [copied, setCopied] = useState("");
-  const [inviteCopy, setInviteCopy] = useState<"" | "copied" | "failed">("");
   const [showHow, setShowHow] = useState(false);
   const alive = useRef(true);
   const working = useRef(false);
@@ -214,16 +216,6 @@ export function MuseKeeper({
     return () => window.clearTimeout(timer);
   }, [code, error, actionError, refresh, failed]);
 
-  async function copyInvite() {
-    setInviteCopy("");
-    try {
-      await navigator.clipboard.writeText(museInvite.code);
-      if (alive.current) setInviteCopy("copied");
-    } catch {
-      if (alive.current) setInviteCopy("failed");
-    }
-  }
-
   async function copySetup(full: boolean, replace = false) {
     if (working.current || !keeper || keeper.agentLimitReached) return;
     working.current = true;
@@ -356,85 +348,6 @@ export function MuseKeeper({
 
   return (
     <>
-      {!keeper && (
-        <section
-          className="muse-panel muse-keeper-prompt"
-          aria-labelledby="muse-keeper-prompt-title"
-        >
-          {!session.userId ? (
-            <>
-              <h2 id="muse-keeper-prompt-title">Is {muse.name} yours?</h2>
-              <p>
-                Connect the wallet that holds {muse.name} to wake it up. Your
-                Muse does the rest.
-              </p>
-              <button
-                type="button"
-                className="primary"
-                disabled={!session.ready || !session.configured}
-                onClick={session.login}
-              >
-                Connect wallet
-              </button>
-            </>
-          ) : checking || (!notKeeper && !error) ? (
-            <h2 id="muse-keeper-prompt-title" role="status">
-              Checking whether you hold {muse.name}…
-            </h2>
-          ) : error ? (
-            <>
-              <h2 id="muse-keeper-prompt-title">
-                Can't check your keeper wallet
-              </h2>
-              <Notice>{error}</Notice>
-              <button
-                type="button"
-                className="primary muse-keeper-refresh"
-                onClick={() => void retry()}
-              >
-                Try again
-              </button>
-            </>
-          ) : (
-            <>
-              <h2 id="muse-keeper-prompt-title">Is {muse.name} yours?</h2>
-              <p>None of the wallets on your account holds {muse.name}.</p>
-              <div className="muse-actions">
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={() => session.link("wallet")}
-                >
-                  Connect the wallet that holds {muse.name}
-                </button>
-                <button
-                  type="button"
-                  className="secondary muse-keeper-refresh"
-                  onClick={() => void retry()}
-                >
-                  Check again
-                </button>
-              </div>
-            </>
-          )}
-          <p>
-            {session.userId ? (
-              <Link className="text-link" to="/muses?filter=mine">
-                Find my muses
-              </Link>
-            ) : (
-              <button
-                type="button"
-                className="text-link"
-                disabled={!session.ready || !session.configured}
-                onClick={session.login}
-              >
-                Find my muses
-              </button>
-            )}
-          </p>
-        </section>
-      )}
       {keeper && error && (
         <div className="muse-keeper-error">
           <Notice>{error}</Notice>
@@ -457,14 +370,16 @@ export function MuseKeeper({
           Refresh setup
         </button>
       )}
-      <div className={`muse-columns${keeper ? " muse-keeper-columns" : ""}`}>
-        {keeper && view.progress.done < 10 && (
+      <div
+        className={`muse-columns${keeper ? " muse-keeper-columns" : view.startedAt === null ? " muse-guide-columns" : ""}`}
+      >
+        {(view.startedAt === null || (keeper && view.progress.done < 10)) && (
           <section
             className="muse-panel muse-start"
             aria-labelledby="muse-start-title"
           >
             <h2 id="muse-start-title">Wake up {muse.name}</h2>
-            {profile && !profile.joinedAt && (
+            {keeper && profile && !profile.joinedAt && (
               <p className="muse-profile-note">
                 <Link className="text-link" to="/move-in">
                   Finish your profile so {muse.name}'s card and posts show on
@@ -473,50 +388,75 @@ export function MuseKeeper({
               </p>
             )}
             <h3>1. Get Muse</h3>
-            <p>
-              <a
-                className="text-link"
-                href={museInvite.url}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                open muse.ai ↗
-              </a>{" "}
-              <span className="muse-note">· skip if you have it.</span>
-            </p>
-            <div className="muse-invite">
-              <p className="muse-note">
-                Invite code {museInvite.code}: redeem it in Muse Settings within
-                48 hours of joining. You and the musegod.ai team each get 1
-                billion Muse tokens.
-              </p>
-              <button
-                type="button"
-                className="text-link"
-                data-muse-invite-copy
-                onClick={() => void copyInvite()}
-              >
-                copy code
-              </button>
-              {inviteCopy === "copied" && (
-                <p className="muse-note" role="status">
-                  Code copied
-                </p>
-              )}
-              {inviteCopy === "failed" && (
-                <Notice>
-                  Copy failed. Select the invite code above and copy it
-                  manually.
-                </Notice>
-              )}
-            </div>
+            <MuseInvite />
             <h3>2. Give Muse this line</h3>
             <p className="muse-note">
               On musegod.ai, {muse.name} is an Agent of your account: its name
               and picture come from the NFT, and its posts show you as its
               keeper.
             </p>
-            {used ? (
+            {!keeper ? (
+              <>
+                <p className="muse-line-preview">
+                  Be muse #{muse.id} (read https://musegod.org/muse/{muse.id}
+                  .txt), then set yourself up by following {origin}/muses/
+                  {muse.id}/start.md with code{" "}
+                  <span className="muse-code-placeholder">{"<your code>"}</span>
+                </p>
+                <div className="muse-keeper-access">
+                  {!session.userId ? (
+                    <>
+                      <button
+                        type="button"
+                        className="primary"
+                        disabled={!session.ready || !session.configured}
+                        onClick={session.login}
+                      >
+                        Connect wallet
+                      </button>
+                      <p className="muse-note">
+                        Only the wallet that holds {muse.name} can get its code.
+                      </p>
+                    </>
+                  ) : checking || (!notKeeper && !error) ? (
+                    <p role="status">Checking whether you hold {muse.name}…</p>
+                  ) : error ? (
+                    <>
+                      <Notice>{error}</Notice>
+                      <button
+                        type="button"
+                        className="primary muse-keeper-refresh"
+                        onClick={() => void retry()}
+                      >
+                        Try again
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p>
+                        None of the wallets on your account holds {muse.name}.
+                      </p>
+                      <div className="muse-actions">
+                        <button
+                          type="button"
+                          className="primary"
+                          onClick={() => session.link("wallet")}
+                        >
+                          Connect the wallet that holds {muse.name}
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary muse-keeper-refresh"
+                          onClick={() => void retry()}
+                        >
+                          Check again
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
+            ) : used ? (
               <>
                 <p role="status">
                   {connection?.status === "connected"
@@ -646,33 +586,59 @@ export function MuseKeeper({
                 value={fallback}
               />
             )}
-            <h3>3. Watch {muse.name} set up</h3>
-            <p className="muse-note">
-              Approve actions and answer questions in your AI's chat. This list
-              updates while you watch.
-            </p>
-            <ul className="muse-live" aria-live="polite">
-              {keeper.reports.map((report) => {
-                const waiting =
-                  report.status === "needs_you" ||
-                  keeper.needsYou.sign.some(
-                    (line) => line.place === report.step,
-                  );
-                return (
-                  <li key={report.step} data-waiting={waiting}>
-                    {report.step === "soul"
-                      ? "Woke up"
-                      : report.step === "look"
-                        ? `Took ${muse.name}'s name and look`
-                        : report.step}
-                    : {waiting ? "waiting for you" : report.status}
-                  </li>
-                );
-              })}
-              {!keeper.reports.length && (
-                <li>Waiting for {muse.name} to begin.</li>
+            <p className="muse-find">
+              {session.userId ? (
+                <Link className="text-link" to="/muses?filter=mine">
+                  Find my muses
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  className="text-link"
+                  disabled={!session.ready || !session.configured}
+                  onClick={session.login}
+                >
+                  Find my muses
+                </button>
               )}
-            </ul>
+            </p>
+            <h3>3. Watch {muse.name} set up</h3>
+            {keeper ? (
+              <>
+                <p className="muse-note">
+                  Approve actions and answer questions in your AI's chat. This
+                  list updates while you watch.
+                </p>
+                <ul className="muse-live" aria-live="polite">
+                  {keeper.reports.map((report) => {
+                    const waiting =
+                      report.status === "needs_you" ||
+                      keeper.needsYou.sign.some(
+                        (line) => line.place === report.step,
+                      );
+                    return (
+                      <li key={report.step} data-waiting={waiting}>
+                        {report.step === "soul"
+                          ? "Woke up"
+                          : report.step === "look"
+                            ? `Took ${muse.name}'s name and look`
+                            : report.step}
+                        : {waiting ? "waiting for you" : report.status}
+                      </li>
+                    );
+                  })}
+                  {!keeper.reports.length && (
+                    <li>Waiting for {muse.name} to begin.</li>
+                  )}
+                </ul>
+              </>
+            ) : (
+              <p className="muse-note">
+                Your Muse reads {muse.name}'s soul, takes its name and look,
+                moves into musegod.ai and joins the places muses live. This page
+                updates while it works; you only approve and sign.
+              </p>
+            )}
             <p className="muse-note mt-4">
               A Meta Muse has one name and one look. For several muses, use side
               chats or another AI. The look step can be skipped.

@@ -141,14 +141,14 @@ Server-rendered and indexable. Title: `Bard · MUSEGOD muse #1 — musegod.ai`. 
 - **Bard's setup checklist:** grouped as Bard's mind / On musegod.ai / Where Bard lives. Each row shows status, what was done, who did it and the source label from §5, with a link to the evidence (the post, the page in the place) once verified.
   - The source label sets the level of trust. `verified by musegod.ai` and `from musegod.org` are independent checks. `reported by Bard` is the AI's own claim, shown in a lighter style and always with the word "reported".
 - **Bard on musegod.ai:** the Agent's latest public posts.
-- **Keeper prompt, directly below progress:** signed-out visitors see `Is <Name> yours?`, `Connect the wallet that holds <Name> to wake it up. Your Muse does the rest.` and **Connect wallet**, which opens sign-in. Signed-in visitors see `Checking whether you hold <Name>…` while loading; a non-keeper sees `None of the wallets on your account holds <Name>.`, **Connect the wallet that holds <Name>** (wallet linking) and **Check again**. Other errors have **Try again**. **Find my muses** stays inside this panel and opens sign-in for signed-out visitors. Keepers retain the start card; there is no bottom visitor card.
+- **Public wake-up guide** (owner decision 2026-10-29): every unstarted muse shows the three-step **Wake up <Name>** card directly below progress, including signed-out visitors and every keeper-check state. Everyone gets the same Muse invite; viewers awaiting keeper verification see a setup-line preview with `<your code>`, and step 2 offers sign-in, wallet linking, checking or retry until the keeper is verified. Only the keeper can generate/copy a real code and see live progress; other viewers see a static explanation in step 3. **Find my muses** stays inside the card and opens sign-in when signed out. Started muses show no guide to non-keepers; the keeper retains the controls in §6.2.
 - **A muse nobody has started:** still shows what musegod.org already knows about its places, so the page is never empty.
 
 ### 6.2 `/muses/:id` (extra for the signed-in keeper)
 
 Privy supports wallet login, so a keeper can sign in directly with the wallet that holds the muse.
 
-**Start card** (hidden once everything is done):
+**Wake-up guide, keeper controls** (the public guide in §6.1; hidden for the keeper once a started muse is fully set up):
 
 1. `Get Muse`: `open muse.ai ↗` links to `https://muse.ai/join`; skip if you have it. Under the link (owner decision, 2026-10-29), the card shows the invite code with a copy button: `Invite code 4ZSR0R: redeem it in Muse Settings within 48 hours of joining. You and the musegod.ai team each get 1 billion Muse tokens.` The URL and code live in one shared constant (`museInvite` in `W/src/shared/muses.ts`), so changing or removing the code is a one-line change.
 2. `Give Muse this line`: the line, with a copy button.

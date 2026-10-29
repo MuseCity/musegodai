@@ -1,14 +1,19 @@
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MemoryRouter, RouterContextProvider } from "react-router";
+import {
+  createMemoryRouter,
+  MemoryRouter,
+  RouterContextProvider,
+  RouterProvider,
+} from "react-router";
 import { beforeEach, expect, it } from "vitest";
 import { MuseChecklist } from "../src/components/muse-setup";
 import { MuseKeeper } from "../src/components/muse-keeper";
 import { AuthContext, type Session } from "../src/components/auth";
 import { servicesContext } from "../src/context";
-import { loader as directoryLoader } from "../src/routes/muses";
-import { loader as detailLoader } from "../src/routes/muse";
+import MusesPage, { loader as directoryLoader } from "../src/routes/muses";
+import MusePage, { loader as detailLoader } from "../src/routes/muse";
 import { deriveSteps } from "../src/shared/muse-steps";
 import * as museData from "../src/shared/muses";
 import { fixture, reset } from "./helpers";
@@ -51,10 +56,16 @@ it("does not redirect or paint public search results as Mine before authenticati
   expect(result.directory.counts.living).toBe(125);
   expect(result.seo.noindex).toBe(true);
 });
-it.each([null, "alice"])(
-  "renders a keeper prompt before any client reads for session %s",
-  async (userId) => {
+it.each([
+  { userId: null, done: 0 },
+  { userId: null, done: 10 },
+  { userId: "alice", done: 0 },
+  { userId: "alice", done: 10 },
+])(
+  "renders the public guide for $userId at $done steps before client reads, but hides it once started",
+  async ({ userId, done }) => {
     const { view } = await detailLoader(args("/muses/1", "1"));
+    view.progress.done = done;
     const session: Session = {
       ready: true,
       configured: true,
@@ -79,28 +90,141 @@ it.each([null, "alice"])(
           { value: session },
           createElement(MuseKeeper, {
             view,
+            origin,
             onRefresh: async () => {},
             children: createElement("div", { id: "checklist-marker" }),
           }),
         ),
       ),
     );
-    expect(html).toContain('class="muse-panel muse-keeper-prompt"');
-    expect(html.indexOf("muse-keeper-prompt")).toBeLessThan(
+    expect(view.startedAt).toBeNull();
+    expect(html).toContain('class="muse-panel muse-start"');
+    expect(html.indexOf("muse-start-title")).toBeLessThan(
       html.indexOf("checklist-marker"),
     );
+    expect(html).toContain("Wake up Bard");
+    for (const step of [
+      "1. Get Muse",
+      "2. Give Muse this line",
+      "3. Watch Bard set up",
+    ])
+      expect(html).toContain(step);
+    expect(html).toContain(`href="${museData.museInvite.url}"`);
+    expect(html).toContain(`Invite code ${museData.museInvite.code}`);
+    expect(html).toContain("data-muse-invite-copy");
+    expect(html).toContain(
+      `Be muse #1 (read https://musegod.org/muse/1.txt), then set yourself up by following ${origin}/muses/1/start.md with code <span class="muse-code-placeholder">&lt;your code&gt;</span>`,
+    );
+    expect(html).toContain(
+      "Your Muse reads Bard&#x27;s soul, takes its name and look, moves into musegod.ai and joins the places muses live. This page updates while it works; you only approve and sign.",
+    );
+    expect(html).not.toContain('class="muse-live"');
+    expect(html).not.toContain("mcr_");
+    expect(html).not.toContain("data-muse-copy=");
+    expect(html).not.toContain("Is Bard yours?");
+    expect(html).not.toContain("muse-keeper-prompt");
+    expect(html).toContain("Find my muses");
     if (userId) {
       expect(html).toContain('role="status"');
       expect(html).toContain("Checking whether you hold Bard…");
     } else {
-      expect(html).toContain("Is Bard yours?");
       expect(html).toContain(
-        "Connect the wallet that holds Bard to wake it up. Your Muse does the rest.",
+        "Only the wallet that holds Bard can get its code.",
       );
       expect(html).toMatch(
         /<button[^>]*class="primary"[^>]*>Connect wallet<\/button>/,
       );
       expect(html).not.toContain('href="/muses?filter=mine"');
+    }
+    const started = renderToStaticMarkup(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(
+          AuthContext,
+          { value: session },
+          createElement(MuseKeeper, {
+            view: { ...view, startedAt: "2026-10-29T00:00:00.000Z" },
+            origin,
+            onRefresh: async () => {},
+            children: createElement("div", { id: "checklist-marker" }),
+          }),
+        ),
+      ),
+    );
+    expect(started).not.toContain("muse-start-title");
+    expect(started).not.toContain("muse-keeper-prompt");
+    expect(started).toContain("checklist-marker");
+  },
+);
+it.each(["unstarted", "started", "directory"])(
+  "shows exactly one public Muse invite to a signed-out viewer on %s",
+  async (state) => {
+    const directory = state === "directory";
+    const initial = directory
+      ? await directoryLoader(args("/muses"))
+      : await detailLoader(args("/muses/1", "1"));
+    if ("view" in initial && state === "started")
+      initial.view.startedAt = "2026-10-29T00:00:00.000Z";
+    const session: Session = {
+      ready: true,
+      configured: true,
+      userId: null,
+      evmAddresses: [],
+      linked: [],
+      login() {},
+      link() {},
+      logout: async () => {},
+      token: async () => null,
+      retryWallet: async () => {},
+      signMessage: async () => {
+        throw new Error("Unused");
+      },
+    };
+    const router = createMemoryRouter(
+      [
+        {
+          id: "invite",
+          path: "*",
+          Component: directory ? MusesPage : MusePage,
+        },
+      ],
+      {
+        initialEntries: [directory ? "/muses" : "/muses/1"],
+        hydrationData: { loaderData: { invite: initial } },
+      },
+    );
+    let html: string;
+    try {
+      html = renderToStaticMarkup(
+        createElement(
+          AuthContext,
+          { value: session },
+          createElement(RouterProvider, { router }),
+        ),
+      );
+    } finally {
+      router.dispose();
+    }
+    expect(html.match(/data-muse-invite=/g)).toHaveLength(1);
+    expect(html).toContain(`href="${museData.museInvite.url}"`);
+    expect(html).toContain(
+      `Invite code ${museData.museInvite.code}: redeem it in Muse Settings within 48 hours of joining. You and the musegod.ai team each get 1 billion Muse tokens.`,
+    );
+    expect(html).toContain("data-muse-invite-copy");
+    expect(html).not.toContain("mcr_");
+    if (state === "unstarted") {
+      expect(html).toContain("1. Get Muse");
+      expect(html).not.toContain("muse-invite-panel");
+    } else {
+      expect(html).toContain("muse-panel muse-invite-panel");
+      expect(html).toMatch(/<h2[^>]*>Get Muse<\/h2>/);
+      expect(html.indexOf("muse-invite-panel")).toBeLessThan(
+        html.indexOf(directory ? 'class="muse-search"' : 'id="muse-checklist"'),
+      );
+      expect(html.indexOf(directory ? "Search by" : "Started ")).toBeLessThan(
+        html.indexOf("muse-invite-panel"),
+      );
     }
   },
 );
@@ -191,12 +315,12 @@ it("caps narrow-screen art at the mockup size until the 820px breakpoint", () =>
     /\.muse-hero\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,
   );
 });
-it("uses the shared Muse invite in the start card and its native copy action", () => {
+it("keeps the shared invite copy and feedback in one component", () => {
   expect(museData).toHaveProperty("museInvite", {
     url: expect.any(String),
     code: expect.any(String),
   });
-  const source = readFileSync("src/components/muse-keeper.tsx", "utf8");
+  const source = readFileSync("src/components/muse-setup.tsx", "utf8");
   const text = source.replace(/\s+/g, " ");
   expect(source).toContain("href={museInvite.url}");
   expect(text).toContain(

@@ -93,14 +93,29 @@
 .muse-panel h2 {
   margin-bottom: 8px;
 }
-.muse-keeper-prompt {
-  margin-top: 26px;
+.muse-invite-panel {
+  margin-top: 20px;
+  padding: 18px;
 }
-.muse-keeper-prompt > .primary {
+.muse-keeper-access,
+.muse-find {
   margin-top: 14px;
 }
-.muse-keeper-prompt > p:last-child {
-  margin-top: 14px;
+.muse-keeper-access > .primary {
+  margin-block: 12px;
+}
+.muse-line-preview {
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--color-canvas);
+  overflow-wrap: anywhere;
+}
+.muse-code-placeholder {
+  display: inline-block;
+  padding-inline: 4px;
+  border: 1px dashed currentColor;
+  border-radius: 4px;
+  font-style: italic;
 }
 .muse-note,
 .muse-safety {
@@ -111,6 +126,15 @@
   display: grid;
   gap: 20px;
   min-width: 0;
+}
+.muse-guide-columns {
+  grid-template-areas: "start posts" "checklist posts";
+}
+.muse-guide-columns #muse-checklist {
+  grid-area: checklist;
+}
+.muse-guide-columns .muse-sidebar {
+  grid-area: posts;
 }
 .muse-keeper-columns {
   grid-template-areas: "start needs" "checklist needs" "posts needs";
@@ -340,6 +364,9 @@
 @media (max-width: 979px) {
   .muse-columns {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .muse-guide-columns {
+    grid-template-areas: "start" "checklist" "posts";
   }
   .muse-keeper-columns {
     grid-template-areas: "start" "needs" "checklist" "posts";
