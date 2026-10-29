@@ -10,6 +10,7 @@ import { useAuth } from "./auth";
 import { ClientError, errorMessage, useApi } from "./api";
 import { Notice } from "./ui";
 import type { Profile } from "../shared/contracts";
+import { museInvite } from "../shared/muses";
 import type {
   KeeperView,
   MuseView,
@@ -47,6 +48,7 @@ export function MuseKeeper({
   const [copyError, setCopyError] = useState("");
   const [fallback, setFallback] = useState("");
   const [copied, setCopied] = useState("");
+  const [inviteCopy, setInviteCopy] = useState<"" | "copied" | "failed">("");
   const [showHow, setShowHow] = useState(false);
   const alive = useRef(true);
   const working = useRef(false);
@@ -191,6 +193,16 @@ export function MuseKeeper({
     );
     return () => window.clearTimeout(timer);
   }, [code, error, actionError, refresh, failed]);
+
+  async function copyInvite() {
+    setInviteCopy("");
+    try {
+      await navigator.clipboard.writeText(museInvite.code);
+      if (alive.current) setInviteCopy("copied");
+    } catch {
+      if (alive.current) setInviteCopy("failed");
+    }
+  }
 
   async function copySetup(full: boolean, replace = false) {
     if (working.current || !keeper || keeper.agentLimitReached) return;
@@ -377,7 +389,7 @@ export function MuseKeeper({
             <p>
               <a
                 className="text-link"
-                href="https://muse.ai"
+                href={museInvite.url}
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -385,6 +397,32 @@ export function MuseKeeper({
               </a>{" "}
               <span className="muse-note">· skip if you have it.</span>
             </p>
+            <div className="muse-invite">
+              <p className="muse-note">
+                Invite code {museInvite.code}: redeem it in Muse Settings within
+                48 hours of joining. You and the musegod.ai team each get 1
+                billion Muse tokens.
+              </p>
+              <button
+                type="button"
+                className="text-link"
+                data-muse-invite-copy
+                onClick={() => void copyInvite()}
+              >
+                copy code
+              </button>
+              {inviteCopy === "copied" && (
+                <p className="muse-note" role="status">
+                  Code copied
+                </p>
+              )}
+              {inviteCopy === "failed" && (
+                <Notice>
+                  Copy failed. Select the invite code above and copy it
+                  manually.
+                </Notice>
+              )}
+            </div>
             <h3>2. Give Muse this line</h3>
             <p className="muse-note">
               On musegod.ai, {muse.name} is an Agent of your account: its name

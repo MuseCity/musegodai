@@ -4,6 +4,10 @@ import type { AgentConnectionStatus } from "./contracts";
 export const museContract = "0x13ea3072b7215d4c9c2ec4f498a08c5825129836";
 export const adapter8004 = "0x000000009d62675362a58911e3f32fecf46f5e18";
 export const museCount = 999;
+export const museInvite = {
+  url: "https://muse.ai/join",
+  code: "4ZSR0R",
+} as const;
 export const placeIds = [
   "flock",
   "musebook",

@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import pg from "pg";
 import { assertLocalTarget } from "../scripts/local-target.ts";
+import { museInvite } from "../src/shared/muses.ts";
 
 const origin = "http://127.0.0.1:5191";
 const redirect = await fetch(origin + "/muses/bard", { redirect: "manual" });
@@ -486,14 +487,14 @@ try {
   );
   evaluate(
     `(()=>{
-      window.__museCopies=[];window.__museStarts=0;window.__museReads=0;
+      window.__museCopies=[];window.__museClipboardDenied=false;window.__museStarts=0;window.__museReads=0;
       window.__musePublicReads=0;window.__museFeedReads=0;window.__museConnectionStatus=null;
       window.__museConnectionState=null;window.__museFeedInFlight=0;
       window.__museFail=false;window.__museDeny=false;window.__museLimit=false;
       window.__museActionError=null;
       window.__museDelay=0;window.__museDelayError=false;
       window.__museInFlight={keeper:0,public:0};window.__museMaxInFlight={keeper:0,public:0};
-      Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__museCopies.push(text)}}});
+      Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{if(window.__museClipboardDenied)throw Error('Clipboard denied');window.__museCopies.push(text)}}});
       window.__museFetch=window.fetch;
       window.fetch=async(input,init)=>{
         const path=new URL(typeof input==='string'?input:input.url,location.href).pathname;
@@ -520,6 +521,79 @@ try {
   );
   assert.equal(
     evaluate(
+      'document.querySelector(".muse-start a[target=\\\"_blank\\\"]").getAttribute("href")',
+    ),
+    museInvite.url,
+    "Get Muse opens the shared invite URL",
+  );
+  const inviteCopy = `Invite code ${museInvite.code}: redeem it in Muse Settings within 48 hours of joining. You and the musegod.ai team each get 1 billion Muse tokens.`;
+  assert.equal(
+    evaluate('document.querySelector(".muse-invite p").textContent'),
+    inviteCopy,
+  );
+  assert.equal(
+    evaluate(
+      'document.querySelector("[data-muse-invite-copy]").textContent.trim()',
+    ),
+    "copy code",
+  );
+  keyboardReachable(
+    '.muse-start a[target="_blank"], [data-muse-invite-copy]',
+    true,
+  );
+  for (let i = 0; i < 80; i++) {
+    if (evaluate('document.activeElement.matches("[data-muse-invite-copy]")'))
+      break;
+    browser("press", "Tab");
+  }
+  assert.ok(
+    evaluate('document.activeElement.matches("[data-muse-invite-copy]")'),
+  );
+  browser("press", "Enter");
+  ready(
+    'document.querySelector(".muse-invite [role=status]")?.textContent==="Code copied"',
+  );
+  assert.deepEqual(evaluate("window.__museCopies"), [museInvite.code]);
+  evaluate("window.__museClipboardDenied=true");
+  browser("click", "[data-muse-invite-copy]");
+  ready(
+    'document.querySelector(".muse-invite [role=alert]")?.textContent==="Copy failed. Select the invite code above and copy it manually."',
+  );
+  assert.equal(
+    evaluate('document.querySelector(".muse-invite [role=status]")'),
+    null,
+  );
+  assert.equal(
+    evaluate(
+      'document.querySelector("textarea[aria-label=\\\"Setup to copy manually\\\"]")',
+    ),
+    null,
+  );
+  assert.deepEqual(evaluate("window.__museCopies"), [museInvite.code]);
+  evaluate("window.__museClipboardDenied=false");
+  browser("click", "[data-muse-invite-copy]");
+  ready(
+    'document.querySelector(".muse-invite [role=status]")?.textContent==="Code copied" && !document.querySelector(".muse-invite [role=alert]")',
+  );
+  assert.deepEqual(evaluate("window.__museCopies"), [
+    museInvite.code,
+    museInvite.code,
+  ]);
+  assert.equal(
+    evaluate("window.__museStarts"),
+    0,
+    "copying the invite does not create an Agent code",
+  );
+  assert.ok(
+    evaluate("document.documentElement.scrollWidth<=375"),
+    "the invite fits at 375px",
+  );
+  evaluate("window.__museCopies=[]");
+  passed.push(
+    "shared Muse invite link and exact copy, keyboard-activated clipboard success, local denial/recovery without OTP fallback, and no 375px overflow",
+  );
+  assert.equal(
+    evaluate(
       'document.querySelectorAll(".muse-needs [data-muse-sign]").length',
     ),
     0,
@@ -537,6 +611,11 @@ try {
     ),
     0,
     "a new start at the Agent limit offers no copy action",
+  );
+  assert.equal(
+    evaluate('document.querySelector("[data-muse-invite-copy]").disabled'),
+    false,
+    "the Muse invite remains available at the Agent limit",
   );
   evaluate("window.__museLimit=false");
   browser("click", ".muse-keeper-refresh");

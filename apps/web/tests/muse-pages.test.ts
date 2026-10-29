@@ -8,6 +8,7 @@ import { servicesContext } from "../src/context";
 import { loader as directoryLoader } from "../src/routes/muses";
 import { loader as detailLoader } from "../src/routes/muse";
 import { deriveSteps } from "../src/shared/muse-steps";
+import * as museData from "../src/shared/muses";
 import { fixture, reset } from "./helpers";
 import { withMuses } from "./muse-fakes";
 
@@ -134,4 +135,23 @@ it("caps narrow-screen art at the mockup size until the 820px breakpoint", () =>
   expect(narrow).toMatch(
     /\.muse-hero\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,
   );
+});
+it("uses the shared Muse invite in the start card and its native copy action", () => {
+  expect(museData).toHaveProperty("museInvite", {
+    url: expect.any(String),
+    code: expect.any(String),
+  });
+  const source = readFileSync("src/components/muse-keeper.tsx", "utf8");
+  const text = source.replace(/\s+/g, " ");
+  expect(source).toContain("href={museInvite.url}");
+  expect(text).toContain(
+    "Invite code {museInvite.code}: redeem it in Muse Settings within 48",
+  );
+  expect(text).toContain(
+    "You and the musegod.ai team each get 1 billion Muse tokens.",
+  );
+  expect(source).toMatch(
+    /<button\s[^>]*type="button"[^>]*data-muse-invite-copy[\s\S]*?>\s*copy code\s*<\/button>/,
+  );
+  expect(source).toContain("navigator.clipboard.writeText(museInvite.code)");
 });
