@@ -1,5 +1,13 @@
 # musegod.ai implementation and verification
 
+## OpenSea ownership and RPC resilience hotfix — local verification (2026-10-29)
+
+Implemented the owner decisions in `docs/muse-onboarding/design.md` without rewriting its Keeper / Keeper checks / Ownership sweep sections. Keeper access now uses the current OpenSea NFT owner and the active-binding agent-wallet exception; transfers revoke the bound Agent, credentials and OAuth grants while retaining posts. EOA signatures recover locally; ERC-1271 and governance retain the ordered four-endpoint RPC fallback, per-endpoint cooldown and sanitized diagnostics. The owner sweep checks active bindings sequentially under per-token transaction locks; migration `0016_drop_muse_sweep.sql` removes the retired Transfer cursor. The UI shows “Woke up” and the actionable ownership-unavailable message.
+
+Local verification: **457 tests / 39 files passed**, plus typecheck (Wrangler-generated Env includes `OPENSEA_API_KEY`), `format:check`, `guard` and browser-script syntax. `db:migrate` verified only the isolated `musecity`, `musecity_test` and `musecity_e2e` targets at `127.0.0.1:65433`. Chrome DevTools against `e2e:serve` verified the first-step copy, ownership error mapping, retry recovery and 375px layout with synthetic ownership/identity/wallet services. The standalone browser script remains uncompleted because its Chrome launcher/CDP attachment is blocked in this sandbox. No real OpenSea/Alchemy request, wallet proof, production migration, deployment, commit or push is claimed. Ignored verification logs, file manifest and report are under `apps/web/.local/ownership-*`.
+
+Production still requires the server-only `OPENSEA_API_KEY` and migration 0016 under separate release authorization. Before rolling back to the prior Worker after dropping the cursor, restore its table definition from immutable migration 0015. Preserve all Agent/credential/OAuth revocations.
+
 ## MUSEGOD muse onboarding — implementation and production release (2026-10-29)
 
 The user approved the design in `docs/muse-onboarding/design.md` and its plan `docs/muse-onboarding/plan.md`, amended the NFT scope (SPEC.md:55/57, AGENTS.md:10), asked for a 15-minute Transfer sweep, set the RPC rule (configured Alchemy `ROBINHOOD_RPC_URL` first, public Robinhood RPC on 429/5xx/timeout/network error, the existing wallet balance check included), added the Muse invite code `4ZSR0R` (`https://muse.ai/join`) to the keeper start card, and then asked to commit pending master work, merge and deploy. Implementation was written by Codex (`gpt-6.1-sol`, xhigh) task by task and reviewed, tested and committed by Claude after each batch.
