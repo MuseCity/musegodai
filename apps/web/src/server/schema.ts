@@ -5,8 +5,15 @@ import {
   jsonb,
   integer,
   boolean,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import type { WorkContent, Scope } from "../shared/contracts";
+import type {
+  MuseReport,
+  PlaceId,
+  ReportCode,
+  SignatureKind,
+} from "../shared/muses";
 export const appSchema = pgSchema("musecity");
 const time = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" }).notNull().defaultNow();
@@ -161,8 +168,68 @@ export const media = appSchema.table("media", {
   etag: text(),
   created_at: time("created_at"),
 });
+export const museBindings = appSchema.table("muse_bindings", {
+  id: text().primaryKey(),
+  token_id: integer().notNull(),
+  agent_id_8004: integer().notNull(),
+  account_id: text()
+    .notNull()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  registration_id: text(),
+  agent_id: text().references(() => agents.id),
+  holder_address: text().notNull(),
+  description: text().notNull(),
+  started_at: time("started_at"),
+  ended_at: timestamp({ withTimezone: true, mode: "date" }),
+  end_reason: text().$type<"transferred" | "disconnected" | "restarted">(),
+});
+export const museReports = appSchema.table(
+  "muse_reports",
+  {
+    binding_id: text()
+      .notNull()
+      .references(() => museBindings.id, { onDelete: "cascade" }),
+    step: text().$type<MuseReport["step"]>().notNull(),
+    status: text().$type<MuseReport["status"]>().notNull(),
+    url: text(),
+    founding_number: integer(),
+    wallet_address: text(),
+    code: text().$type<ReportCode>(),
+    reported_at: time("reported_at"),
+  },
+  (table) => [primaryKey({ columns: [table.binding_id, table.step] })],
+);
+export const museSignatures = appSchema.table("muse_signatures", {
+  id: text().primaryKey(),
+  binding_id: text()
+    .notNull()
+    .references(() => museBindings.id, { onDelete: "cascade" }),
+  kind: text().$type<SignatureKind>().notNull(),
+  place: text().$type<PlaceId>(),
+  line: text().notNull(),
+  at: integer(),
+  signer: text().notNull(),
+  signature: text().notNull(),
+  state: text()
+    .$type<
+      | "queued"
+      | "sent"
+      | "handed_to_agent"
+      | "failed"
+      | "expired"
+      | "superseded"
+    >()
+    .notNull(),
+  attempts: integer().notNull().default(0),
+  sent_at: timestamp({ withTimezone: true, mode: "date" }),
+  result_code: text(),
+  created_at: time("created_at"),
+});
 export type AccountRow = typeof accounts.$inferSelect;
 export type AgentRow = typeof agents.$inferSelect;
 export type WorkRow = typeof works.$inferSelect;
 export type RevisionRow = typeof revisions.$inferSelect;
 export type MediaRow = typeof media.$inferSelect;
+export type MuseBindingRow = typeof museBindings.$inferSelect;
+export type MuseReportRow = typeof museReports.$inferSelect;
+export type MuseSignatureRow = typeof museSignatures.$inferSelect;
