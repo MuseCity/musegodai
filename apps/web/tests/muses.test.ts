@@ -1,10 +1,20 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { activate } from "../src/server/agents";
+import { activate, connectionStatus } from "../src/server/agents";
 import { actor } from "../src/server/auth";
 import { digest } from "../src/server/crypto";
-import { withDatabase } from "../src/server/database";
+import { withDatabase, type Database } from "../src/server/database";
 import { ApiError } from "../src/server/errors";
-import { bindingStillHeld, controllersFor } from "../src/server/muses";
+import {
+  bindingStillHeld,
+  controllersFor,
+  directory,
+  myMuses,
+  publicMuse,
+} from "../src/server/muses";
+import type { AccountRow } from "../src/server/schema";
 import { placeIds } from "../src/shared/muses";
 import { config, fixture, reset } from "./helpers";
 import { addresses, withMuses } from "./muse-fakes";
@@ -21,6 +31,38 @@ const rows = () =>
   );
 const step = (data: any, id: string) =>
   data.steps.find((s: any) => s.id === id);
+const museDeps = (f: Fixture) => ({
+  musegod: f.musegod,
+  chain: f.chain,
+  wallets: f.wallets,
+  origin: f.services.origin,
+});
+async function seedDirectoryBindings(
+  d: Database,
+  ownerId: string,
+  count: number,
+) {
+  await d.query(
+    "INSERT INTO musecity.agents(id,owner_account_id,name,scopes,last_active_at) SELECT 'directory-agent-'||n,$1,'Muse '||n,'[]'::jsonb,now() FROM generate_series(1,$2::integer) n ON CONFLICT DO NOTHING",
+    [ownerId, count],
+  );
+  await d.query(
+    "INSERT INTO musecity.registrations(id,name,requested_scopes,owner_account_id,token_hash,status,expires_at,agent_id) SELECT 'directory-registration-'||n,'Muse '||n,'[]'::jsonb,$1,'directory-code-'||n,'activated',now()-interval '1 day','directory-agent-'||n FROM generate_series(1,$2::integer) n ON CONFLICT DO NOTHING",
+    [ownerId, count],
+  );
+  await d.query(
+    "INSERT INTO musecity.credentials(id,agent_id,token_hash,prefix,expires_at) SELECT 'directory-credential-'||n,'directory-agent-'||n,'directory-secret-'||n,'fixture',now()+interval '1 day' FROM generate_series(1,$1::integer) n ON CONFLICT DO NOTHING",
+    [count],
+  );
+  await d.query(
+    "INSERT INTO musecity.muse_bindings(id,token_id,agent_id_8004,account_id,registration_id,agent_id,holder_address,description) SELECT 'directory-binding-'||n,n,6591+n,$1,'directory-registration-'||n,'directory-agent-'||n,$3,'' FROM generate_series(1,$2::integer) n ON CONFLICT DO NOTHING",
+    [ownerId, count, addresses.alice],
+  );
+  await d.query(
+    "INSERT INTO musecity.muse_reports(binding_id,step,status) SELECT 'directory-binding-'||n,step,status FROM generate_series(1,$1::integer) n CROSS JOIN (VALUES ('soul','done'),('look','skipped')) reports(step,status) ON CONFLICT DO NOTHING",
+    [count],
+  );
+}
 async function connected(f: Fixture) {
   const created = await start(f);
   expect(created.status).toBe(201);
@@ -384,6 +426,194 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
     ).toBe(403);
   });
 
+  it("reads directory progress in one query at every active-binding count", async () => {
+    const f = withMuses(fixture());
+    await withDatabase(config.testAdminUrl, async (d) => {
+      const a = await actor(d, { kind: "human", userId: "did:privy:alice" });
+      const queryCounts: number[] = [];
+      for (const count of [0, 1, 12, 99, 999]) {
+        await seedDirectoryBindings(d, a.account.id, count);
+        const query = vi.spyOn(d, "query");
+        try {
+          const result = await directory(d, museDeps(f), new URLSearchParams());
+          queryCounts.push(query.mock.calls.length);
+          expect(result.items).toHaveLength(999);
+          expect(result.counts.awake).toBe(count);
+          expect(result.items.filter((m) => m.started)).toHaveLength(count);
+          expect(
+            result.items.filter((m) => m.started).every((m) => m.done === 2),
+          ).toBe(true);
+        } finally {
+          query.mockRestore();
+        }
+      }
+      expect(queryCounts).toEqual([1, 1, 1, 1, 1]);
+    });
+  });
+
+  it("computes myMuses only for owned entries, without reading other bindings", async () => {
+    const f = withMuses(fixture());
+    f.setOwner(2, addresses.external);
+    f.gallery.muses.push({ id: 1, linked: ["x"] });
+    await withDatabase(config.testAdminUrl, async (d) => {
+      const alice = await actor(d, {
+        kind: "human",
+        userId: "did:privy:alice",
+      });
+      const bob = await actor(d, { kind: "human", userId: "did:privy:bob" });
+      await seedDirectoryBindings(d, alice.account.id, 999);
+      const query = vi.spyOn(d, "query");
+      try {
+        const mine = await myMuses(d, museDeps(f), alice);
+        expect(mine.map((m) => [m.id, m.done])).toEqual([
+          [1, 3],
+          [2, 2],
+        ]);
+        expect(query).toHaveBeenCalledTimes(1);
+        const returned = await query.mock.results[0].value;
+        expect(
+          returned.map((row: { token_id: number }) => row.token_id).sort(),
+        ).toEqual([1, 2]);
+        query.mockClear();
+        expect(await myMuses(d, museDeps(f), bob)).toEqual([]);
+        expect(query).not.toHaveBeenCalled();
+      } finally {
+        query.mockRestore();
+      }
+    });
+  });
+
+  it("keeps batched awake status equivalent to connectionStatus and the detail page", async () => {
+    const f = withMuses(fixture());
+    await withDatabase(config.testAdminUrl, async (d) => {
+      const a = await actor(d, { kind: "human", userId: "did:privy:alice" });
+      await seedDirectoryBindings(d, a.account.id, 1);
+      for (const state of [
+        { status: "waiting", registered: false },
+        { status: "expired", registered: false, expiredCode: true },
+        { status: "cancelled", registered: false, cancelled: true },
+        { status: "awaiting_verification", unverified: true },
+        { status: "connected", expiredCode: true },
+        { status: "paused", agentStatus: "paused" },
+        { status: "revoked", agentStatus: "revoked" },
+        { status: "revoked", expiredCredential: true },
+        { status: "revoked", revokedCredential: true },
+        { status: "connected", restricted: true },
+        { status: "connected", joined: true, publicVisible: true },
+      ]) {
+        await d.query(
+          "UPDATE musecity.registrations SET agent_id=$1,status=$2,expires_at=now()+($3::integer * interval '1 day') WHERE id='directory-registration-1'",
+          [
+            state.registered === false ? null : "directory-agent-1",
+            state.cancelled ? "cancelled" : "activated",
+            state.expiredCode ? -1 : 1,
+          ],
+        );
+        await d.query(
+          "UPDATE musecity.agents SET status=$1,last_active_at=CASE WHEN $2 THEN NULL ELSE now() END,public_visible=$3 WHERE id='directory-agent-1'",
+          [
+            state.agentStatus ?? "active",
+            state.unverified ?? false,
+            state.publicVisible ?? false,
+          ],
+        );
+        await d.query(
+          "UPDATE musecity.credentials SET revoked_at=CASE WHEN $1 THEN now() ELSE NULL END,expires_at=now()+($2::integer * interval '1 day') WHERE id='directory-credential-1'",
+          [state.revokedCredential ?? false, state.expiredCredential ? -1 : 1],
+        );
+        await d.query(
+          "UPDATE musecity.accounts SET status=$2,joined_at=CASE WHEN $3 THEN now() ELSE NULL END WHERE id=$1",
+          [
+            a.account.id,
+            state.restricted ? "restricted" : "active",
+            state.joined ?? false,
+          ],
+        );
+        const account = (await d.one<AccountRow>(
+          "SELECT * FROM musecity.accounts WHERE id=$1",
+          [a.account.id],
+        ))!;
+        const status = await connectionStatus(
+          d,
+          { ...a, account },
+          "directory-registration-1",
+        );
+        expect(status.status, JSON.stringify(state)).toBe(state.status);
+        const list = await directory(d, museDeps(f), new URLSearchParams());
+        const detail = await publicMuse(d, museDeps(f), "1");
+        expect(list.items[0].awake, JSON.stringify(state)).toBe(
+          status.status === "connected" && account.status === "active",
+        );
+        expect(list.items[0].done, JSON.stringify(state)).toBe(
+          detail.progress.done,
+        );
+      }
+      await d.query(
+        "DELETE FROM musecity.credentials WHERE id='directory-credential-1'",
+      );
+      expect(
+        (await connectionStatus(d, a, "directory-registration-1")).status,
+      ).toBe("revoked");
+      expect(
+        (await directory(d, museDeps(f), new URLSearchParams())).items[0].awake,
+      ).toBe(false);
+    });
+  });
+
+  it("keeps batched reports and hello evidence equivalent across hidden posts and ended bindings", async () => {
+    const f = withMuses(fixture());
+    await withDatabase(config.testAdminUrl, async (d) => {
+      const a = await actor(d, { kind: "human", userId: "did:privy:alice" });
+      const bob = await actor(d, { kind: "human", userId: "did:privy:bob" });
+      await seedDirectoryBindings(d, a.account.id, 1);
+      await d.query(
+        "INSERT INTO musecity.posts(id,owner_account_id,agent_id,kind,text,blocked,deleted) VALUES('blocked',$1,'directory-agent-1','update','hidden',true,false),('deleted',$1,'directory-agent-1','update','gone',false,true),('other-owner',$2,'directory-agent-1','update','wrong owner',false,false),('human',$1,NULL,'update','human',false,false)",
+        [a.account.id, bob.account.id],
+      );
+      const check = async (done: number) => {
+        const list = await directory(d, museDeps(f), new URLSearchParams());
+        const detail = await publicMuse(d, museDeps(f), "1");
+        expect(list.items[0].done).toBe(done);
+        expect(list.items[0].done).toBe(detail.progress.done);
+        return detail;
+      };
+      expect(step(await check(2), "hello").status).toBe("pending");
+      await d.query(
+        "UPDATE musecity.posts SET blocked=false WHERE id='blocked'",
+      );
+      expect(step(await check(3), "hello").evidence).toBe("/posts/blocked");
+      await d.query(
+        "UPDATE musecity.posts SET deleted=false WHERE id='deleted'",
+      );
+      await d.query(
+        "UPDATE musecity.posts SET blocked=true WHERE id='blocked'",
+      );
+      expect(step(await check(3), "hello").evidence).toBe("/posts/deleted");
+      await d.query(
+        "UPDATE musecity.muse_reports SET status='done' WHERE step='look'",
+      );
+      await check(4);
+      await d.query(
+        "UPDATE musecity.muse_reports SET status='needs_you' WHERE step='soul'",
+      );
+      await check(3);
+      await d.query(
+        "UPDATE musecity.accounts SET status='restricted' WHERE id=$1",
+        [a.account.id],
+      );
+      await check(1);
+      await d.query(
+        "UPDATE musecity.accounts SET status='active' WHERE id=$1",
+        [a.account.id],
+      );
+      await d.query(
+        "UPDATE musecity.muse_bindings SET ended_at=now(),end_reason='restarted'",
+      );
+      const detail = await check(0);
+      expect(detail.startedAt).toBeNull();
+    });
+  });
+
   it("does not turn unavailable gallery evidence into zero living muses", async () => {
     const f = withMuses(fixture());
     f.musegod.gallery.mockRejectedValue(
@@ -559,4 +789,45 @@ it("bindingStillHeld recognizes the holder, any linked wallet or the muse's agen
   expect(
     bindingStillHeld({ ...input, ownerOf: addresses.agent, agentWallet: null }),
   ).toBe(false);
+});
+
+it("keeps Agent activation free of runtime import cycles", () => {
+  const visited = new Set<string>();
+  const cycles: string[][] = [];
+  function visit(file: string, path: string[]) {
+    if (path.includes(file)) {
+      cycles.push([...path.slice(path.indexOf(file)), file]);
+      return;
+    }
+    if (visited.has(file)) return;
+    visited.add(file);
+    const source = ts.createSourceFile(
+      file,
+      readFileSync(file, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    for (const node of source.statements) {
+      if (
+        !ts.isImportDeclaration(node) ||
+        !ts.isStringLiteral(node.moduleSpecifier)
+      )
+        continue;
+      const clause = node.importClause;
+      if (clause?.isTypeOnly) continue;
+      if (
+        clause &&
+        !clause.name &&
+        clause.namedBindings &&
+        ts.isNamedImports(clause.namedBindings) &&
+        clause.namedBindings.elements.every((item) => item.isTypeOnly)
+      )
+        continue;
+      const specifier = node.moduleSpecifier.text;
+      if (specifier.startsWith("."))
+        visit(resolve(dirname(file), specifier + ".ts"), [...path, file]);
+    }
+  }
+  visit(resolve("src/server/agents.ts"), []);
+  expect(cycles).toEqual([]);
 });

@@ -9,7 +9,7 @@ import {
   type AgentConnectionStatus,
 } from "../shared/contracts";
 import type { AgentRow } from "./schema";
-import { bindRedeemedAgent } from "./muses";
+import { bindRedeemedAgent } from "./muse-bindings";
 type Registration = {
   id: string;
   name: string;

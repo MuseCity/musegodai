@@ -8,6 +8,7 @@ import {
   type MuseDirectory,
   type MuseView,
   type MuseWorlds,
+  type PlaceId,
   type StartResult,
 } from "../shared/muses";
 import {
@@ -457,29 +458,8 @@ export async function directory(
           (address) => address.toLowerCase(),
         )
       : [];
-  const bindings = await db.query<MuseBindingRow>(
-    "SELECT * FROM musecity.muse_bindings WHERE ended_at IS NULL",
-  );
-  const byToken = new Map(
-    bindings.map((binding) => [binding.token_id, binding]),
-  );
   const places = new Map(gallery.value.muses.map((m) => [m.id, m.linked]));
-  const items: DirectoryItem[] = [];
-  for (const entry of catalog.value) {
-    const binding = byToken.get(entry.id);
-    const local = await localFacts(db, binding);
-    const worlds: MuseWorlds = {};
-    for (const place of places.get(entry.id) ?? [])
-      worlds[place] = { linked: true, current: true, url: null };
-    items.push({
-      id: entry.id,
-      name: entry.name,
-      thumb: entry.thumb,
-      done: progress(deriveSteps({ ...local.facts, worlds })).done,
-      awake: local.facts.connected,
-      started: !!binding,
-    });
-  }
+  const items = await directoryItems(db, catalog.value, places);
   const counts = {
     awake: items.filter((m) => m.awake).length,
     living: gallery.value.living,
@@ -521,8 +501,89 @@ export async function myMuses(
   deps: MuseDeps,
   a: Actor,
 ): Promise<DirectoryItem[]> {
-  return (await directory(db, deps, new URLSearchParams({ filter: "mine" }), a))
-    .items;
+  requireValue(
+    !a.agent,
+    403,
+    "SCOPE_DENIED",
+    "Only the account owner can do this.",
+  );
+  const [catalog, gallery, linked] = await Promise.all([
+    deps.musegod.catalog(),
+    deps.musegod.gallery(),
+    deps.wallets.linkedAddresses(a.account.privy_user_id),
+  ]);
+  const addresses = new Set(linked.map((address) => address.toLowerCase()));
+  const owned = catalog.value.filter((entry) =>
+    addresses.has(entry.owner.toLowerCase()),
+  );
+  if (!owned.length) return [];
+  return (
+    await directoryItems(
+      db,
+      owned,
+      new Map(gallery.value.muses.map((m) => [m.id, m.linked])),
+      owned.map((entry) => entry.id),
+    )
+  ).sort((a, b) => a.id - b.id);
+}
+
+async function directoryItems(
+  db: Database,
+  catalog: CatalogEntry[],
+  places: Map<number, PlaceId[]>,
+  tokenIds?: number[],
+): Promise<DirectoryItem[]> {
+  const rows = await db.query<{
+    token_id: number;
+    soul: "done" | "skipped" | null;
+    look: "done" | "skipped" | null;
+    connected: boolean;
+    hello_post_id: string | null;
+  }>(
+    `SELECT b.token_id,soul.status AS soul,look.status AS look,
+      COALESCE(a.status='active' AND connected_agent.status NOT IN ('revoked','paused')
+        AND connected_agent.last_active_at IS NOT NULL AND EXISTS (
+          SELECT 1 FROM musecity.credentials c WHERE c.agent_id=connected_agent.id
+            AND c.revoked_at IS NULL AND c.expires_at>now()
+        ),false) AS connected,
+      (SELECT p.id FROM musecity.posts p WHERE p.agent_id=bound_agent.id
+        AND p.owner_account_id=a.id AND a.status='active' AND NOT p.deleted AND NOT p.blocked
+        ORDER BY p.created_at,p.id LIMIT 1) AS hello_post_id
+    FROM musecity.muse_bindings b
+    LEFT JOIN musecity.accounts a ON a.id=b.account_id
+    LEFT JOIN musecity.registrations r ON r.id=b.registration_id AND r.owner_account_id=a.id
+    LEFT JOIN musecity.agents connected_agent ON connected_agent.id=r.agent_id AND connected_agent.owner_account_id=a.id
+    LEFT JOIN musecity.agents bound_agent ON bound_agent.id=b.agent_id AND bound_agent.owner_account_id=a.id
+    LEFT JOIN musecity.muse_reports soul ON soul.binding_id=b.id AND soul.step='soul' AND soul.status<>'needs_you'
+    LEFT JOIN musecity.muse_reports look ON look.binding_id=b.id AND look.step='look' AND look.status<>'needs_you'
+    WHERE b.ended_at IS NULL${tokenIds ? " AND b.token_id=ANY($1::integer[])" : ""}`,
+    tokenIds ? [tokenIds] : [],
+  );
+  const byToken = new Map(rows.map((row) => [row.token_id, row]));
+  return catalog.map((entry) => {
+    const local = byToken.get(entry.id);
+    const worlds: MuseWorlds = {};
+    for (const place of places.get(entry.id) ?? [])
+      worlds[place] = { linked: true, current: true, url: null };
+    return {
+      id: entry.id,
+      name: entry.name,
+      thumb: entry.thumb,
+      done: progress(
+        deriveSteps({
+          reports: {
+            ...(local?.soul ? { soul: local.soul } : {}),
+            ...(local?.look ? { look: local.look } : {}),
+          },
+          connected: local?.connected ?? false,
+          helloPostId: local?.hello_post_id ?? null,
+          worlds,
+        }),
+      ).done,
+      awake: local?.connected ?? false,
+      started: !!local,
+    };
+  });
 }
 
 export async function restartMuse(
@@ -546,20 +607,4 @@ export async function restartMuse(
     await endBinding(db, binding, "restarted");
   }
   return { restarted: true };
-}
-
-export async function bindRedeemedAgent(
-  db: Database,
-  registrationId: string,
-  agentId: string,
-): Promise<void> {
-  const binding = await db.one<MuseBindingRow>(
-    "UPDATE musecity.muse_bindings SET agent_id=$2 WHERE registration_id=$1 AND ended_at IS NULL RETURNING *",
-    [registrationId, agentId],
-  );
-  if (binding)
-    await db.query(
-      "UPDATE musecity.agents SET public_visible=true,description=$2 WHERE id=$1 AND owner_account_id=$3",
-      [agentId, binding.description, binding.account_id],
-    );
 }
