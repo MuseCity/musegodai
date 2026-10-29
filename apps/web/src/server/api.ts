@@ -101,6 +101,7 @@ import {
   relayPending,
   submitSignature,
 } from "./muse-relay";
+import { openseaOwnership, type OwnershipServices } from "./opensea";
 export type Services = {
   connectionString: string;
   store: ObjectStore;
@@ -110,6 +111,7 @@ export type Services = {
   wallets?: WalletServices;
   musegod?: MusegodServices;
   museChain?: MuseChain;
+  ownership?: OwnershipServices;
   waitUntil?: (p: Promise<unknown>) => void;
   verifyWebsite?: WebsiteVerifier;
 };
@@ -136,6 +138,15 @@ export const productionServices = (
     },
   }),
   museChain: robinhoodMuseChain(env.ROBINHOOD_RPC_URL),
+  ownership: openseaOwnership({
+    apiKey: env.OPENSEA_API_KEY,
+    cache: {
+      match: async (request) =>
+        (await caches.open("musecity-ownership-v1")).match(request),
+      put: async (request, response) =>
+        (await caches.open("musecity-ownership-v1")).put(request, response),
+    },
+  }),
   waitUntil: (promise) => ctx.waitUntil(promise),
   images: {
     process: cloudflareImages(env.IMAGES),
@@ -186,7 +197,7 @@ export function createApi(s: Services, mcpCredential?: string) {
   const app = new Hono<AppEnv>();
   const museDeps = (): muses.MuseDeps => {
     requireValue(
-      s.musegod && s.museChain && s.wallets,
+      s.musegod && s.museChain && s.wallets && s.ownership,
       503,
       "MUSES_UNAVAILABLE",
       "Muse setup is unavailable right now.",
@@ -194,6 +205,7 @@ export function createApi(s: Services, mcpCredential?: string) {
     return {
       musegod: s.musegod,
       chain: s.museChain,
+      ownership: s.ownership,
       wallets: s.wallets,
       origin: s.origin,
     };
@@ -218,8 +230,9 @@ export function createApi(s: Services, mcpCredential?: string) {
     chargeRate = true,
   ): Promise<T> => {
     const who = await identity(c.req.raw, s.verify, mcpCredential);
-    return db((d) =>
-      d.transaction(async () => {
+    return db(async (d) => {
+      let rejected: muses.KeeperTransferredError | undefined;
+      const result = await d.transaction(async () => {
         // Serialize cross-account social writes before acquiring any account row.
         // This gives block/reply/moderation a defined commit order and prevents FK lock inversions.
         if (
@@ -229,12 +242,27 @@ export function createApi(s: Services, mcpCredential?: string) {
           )
         )
           await d.query("SELECT pg_advisory_xact_lock(624139188)");
+        const museMutation = c.req.path.match(
+          /^\/api\/v1\/me\/muses\/([1-9]\d{0,2})\/(?:start|restart)$/,
+        );
+        if (museMutation)
+          await d.query("SELECT pg_advisory_xact_lock(8004,$1)", [
+            Number(museMutation[1]),
+          ]);
         const a = await actor(d, who, scope, human, diagnostic);
         if (c.req.method !== "GET" && chargeRate)
           await rateLimit(d, "account:" + a.account.id, 120);
-        return fn(d, a);
-      }),
-    );
+        try {
+          return await fn(d, a);
+        } catch (error) {
+          if (!(error instanceof muses.KeeperTransferredError)) throw error;
+          rejected = error;
+          return undefined as T;
+        }
+      });
+      if (rejected) throw rejected;
+      return result;
+    });
   };
   const write = <T>(
     c: Context<AppEnv>,

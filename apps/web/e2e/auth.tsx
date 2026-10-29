@@ -130,7 +130,11 @@ export function AuthProvider({
         retryWallet: async () => {
           update({ connection: "ready" });
         },
-        link: () => {},
+        link: (kind) => {
+          window.dispatchEvent(
+            new CustomEvent("fixture-link", { detail: kind }),
+          );
+        },
         linked: ["twitter_oauth"],
         configured: ready,
       }}

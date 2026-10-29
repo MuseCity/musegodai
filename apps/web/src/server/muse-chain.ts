@@ -1,45 +1,40 @@
 import {
   createPublicClient,
-  erc721Abi,
   http,
-  fallback,
-  parseAbi,
-  parseAbiItem,
+  createTransport,
   BaseError,
   HttpRequestError,
   RpcRequestError,
   TimeoutError,
   ExecutionRevertedError,
   type Address,
+  type EIP1193RequestFn,
 } from "viem";
 import { robinhood } from "../shared/chains";
-import { adapter8004, museContract } from "../shared/muses";
 import { ApiError, requireValue } from "./errors";
-import { robinhoodEndpoints, retryableRpc, logRpcFallback } from "./rpc";
+import {
+  robinhoodEndpoints,
+  retryableRpc,
+  coolDownRpc,
+  rpcAttempt,
+  logRpcFailure,
+  type RpcAttempt,
+  hasVerifiedRpcChain,
+  rememberRpcChain,
+} from "./rpc";
 
 export type MuseChain = {
-  headBlock(): Promise<bigint>;
-  transferredTokens(fromBlock: bigint, toBlock: bigint): Promise<number[]>;
-  ownerOf(tokenId: number): Promise<string>;
-  isController(agentId: number, address: string): Promise<boolean>;
-  bindingOf(agentId: number): Promise<{
-    standard: number;
-    contract: string;
-    tokenId: number;
-  }>;
   verifyMessage(
     address: string,
     message: string,
     signature: `0x${string}`,
   ): Promise<boolean>;
 };
-
-const adapterAbi = parseAbi([
-  "function isController(uint256 agentId, address controller) view returns (bool)",
-  "function bindingOf(uint256 agentId) view returns (uint8, address, uint256)",
-]);
-const cacheTtl = 60_000;
-type Cached<T> = { value: T; expiresAt: number };
+type ReadDiagnostics = {
+  attempts: RpcAttempt[];
+  endpoint?: string;
+  failed: boolean;
+};
 
 function unavailable() {
   return new ApiError(
@@ -52,177 +47,138 @@ function unavailable() {
 export function robinhoodMuseChain(rpcUrl?: string): MuseChain {
   // Keep the client instance request-scoped. Never combine I/O belonging to
   // different Cloudflare Worker request contexts in a shared batch scheduler.
-  const makeClient = (onError?: (error: unknown) => void) =>
+  const chainChecks = new Map<string, Promise<void>>();
+  const makeClient = (
+    diagnostics: ReadDiagnostics,
+    onError?: (error: unknown) => void,
+  ) =>
     createPublicClient({
       chain: robinhood,
       batch: { multicall: false },
-      transport: (options) => {
-        const endpoints = robinhoodEndpoints(rpcUrl);
-        const transport = fallback(
-          endpoints.map((endpoint) =>
-            http(endpoint, {
-              batch: false,
-              timeout: 8_000,
-              retryCount: 0,
-              // viem otherwise prefers a JSON-RPC error body over HTTP status.
-              // Keep 429/5xx eligible for fallback regardless of that body.
-              onFetchResponse(response) {
-                if (!response.ok)
-                  throw Object.assign(new Error("RPC HTTP request failed."), {
-                    status: response.status,
-                  });
-              },
-            }),
-          ),
-          {
-            rank: false,
-            retryCount: 0,
-            shouldThrow: (error) => !retryableRpc(error),
-          },
-        )(options);
-        transport.value?.onResponse(({ status, error, transport: source }) => {
-          if (
-            status === "error" &&
-            endpoints.length > 1 &&
-            source.value?.url === endpoints[0] &&
-            retryableRpc(error)
-          )
-            logRpcFallback(error);
-        });
-        const request = ((...args: Parameters<typeof transport.request>) =>
-          transport.request(...args).catch((error: unknown) => {
-            onError?.(error);
-            throw error;
-          })) as typeof transport.request;
-        return { ...transport, request };
-      },
+      transport: (options) =>
+        createTransport({
+          key: "robinhood",
+          name: "Robinhood RPC",
+          type: "http",
+          retryCount: 0,
+          request: (async (args, requestOptions) => {
+            // Re-select for each read so this client also observes a new cooldown.
+            const endpoints = robinhoodEndpoints(rpcUrl);
+            for (const [index, endpoint] of endpoints.entries()) {
+              diagnostics.endpoint = endpoint;
+              diagnostics.failed = false;
+              try {
+                const transport = http(endpoint, {
+                  batch: false,
+                  timeout: 8_000,
+                  retryCount: 0,
+                  onFetchResponse(response) {
+                    if (!response.ok)
+                      throw Object.assign(
+                        new Error("RPC HTTP request failed."),
+                        {
+                          status: response.status,
+                        },
+                      );
+                  },
+                })(options);
+                if (!hasVerifiedRpcChain(endpoint, robinhood.id)) {
+                  let check = chainChecks.get(endpoint);
+                  if (!check) {
+                    check = transport
+                      .request({ method: "eth_chainId" })
+                      .then((id) => {
+                        requireValue(
+                          typeof id === "string" &&
+                            /^0x[0-9a-f]+$/i.test(id) &&
+                            BigInt(id) === BigInt(robinhood.id),
+                          503,
+                          "RPC_UNAVAILABLE",
+                          "Wrong network.",
+                        );
+                        rememberRpcChain(endpoint, robinhood.id);
+                      })
+                      .finally(() => {
+                        chainChecks.delete(endpoint);
+                      });
+                    chainChecks.set(endpoint, check);
+                  }
+                  await check;
+                }
+                if (args.method === "eth_chainId")
+                  return `0x${robinhood.id.toString(16)}`;
+                return await transport.request(args, requestOptions);
+              } catch (error) {
+                diagnostics.failed = true;
+                diagnostics.attempts.push(rpcAttempt(endpoint, error));
+                if (!(error instanceof ApiError) && retryableRpc(error)) {
+                  coolDownRpc(endpoint, error);
+                  if (index < endpoints.length - 1) continue;
+                }
+                onError?.(error);
+                throw error;
+              }
+            }
+            throw unavailable();
+          }) as EIP1193RequestFn,
+        }),
     });
-  const client = makeClient();
-  let chainChecked: Promise<void> | undefined;
-  const owners = new Map<number, Cached<string>>();
-  const controllers = new Map<string, Cached<boolean>>();
-
-  async function read<T>(operation: () => Promise<T>): Promise<T> {
+  async function read<T>(
+    operation: (client: ReturnType<typeof makeClient>) => Promise<T>,
+    onError?: (error: unknown) => void,
+  ): Promise<T> {
+    const diagnostics: ReadDiagnostics = { attempts: [], failed: false };
+    const client = makeClient(diagnostics, onError);
     try {
-      chainChecked ??= client.getChainId().then((chainId) => {
-        requireValue(
-          chainId === robinhood.id,
-          503,
-          "RPC_UNAVAILABLE",
-          "Wrong network.",
-        );
-      });
-      await chainChecked;
-      return await operation();
-    } catch {
+      await client.getChainId();
+      return await operation(client);
+    } catch (error) {
+      if (!diagnostics.failed && diagnostics.endpoint)
+        diagnostics.attempts.push(rpcAttempt(diagnostics.endpoint, error));
+      logRpcFailure(diagnostics.attempts);
       // Do not expose RPC URLs, credentials, payloads or wallet addresses.
       throw unavailable();
     }
   }
 
   return {
-    headBlock: () => read(() => client.getBlockNumber({ cacheTime: 0 })),
-    transferredTokens: (fromBlock, toBlock) =>
-      read(async () => {
-        const logs = await client.getLogs({
-          address: museContract,
-          event: parseAbiItem(
-            "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
-          ),
-          fromBlock,
-          toBlock,
-          strict: true,
-        });
-        return [
-          ...new Set(
-            logs
-              .map((log) => Number(log.args.tokenId))
-              .filter((id) => Number.isInteger(id) && id >= 1 && id <= 999),
-          ),
-        ];
-      }),
-    async ownerOf(tokenId) {
-      const cached = owners.get(tokenId);
-      if (cached && cached.expiresAt > Date.now()) return cached.value;
-      const value = await read(async () =>
-        (
-          await client.readContract({
-            address: museContract,
-            abi: erc721Abi,
-            functionName: "ownerOf",
-            args: [BigInt(tokenId)],
-          })
-        ).toLowerCase(),
-      );
-      owners.set(tokenId, { value, expiresAt: Date.now() + cacheTtl });
-      return value;
-    },
-    async isController(agentId, address) {
-      const controller = address.toLowerCase() as Address;
-      const key = `${agentId}:${controller}`;
-      const cached = controllers.get(key);
-      if (cached && cached.expiresAt > Date.now()) return cached.value;
-      const value = await read(() =>
-        client.readContract({
-          address: adapter8004,
-          abi: adapterAbi,
-          functionName: "isController",
-          args: [BigInt(agentId), controller],
-        }),
-      );
-      controllers.set(key, { value, expiresAt: Date.now() + cacheTtl });
-      return value;
-    },
-    bindingOf: (agentId) =>
-      read(async () => {
-        const [standard, contract, token] = await client.readContract({
-          address: adapter8004,
-          abi: adapterAbi,
-          functionName: "bindingOf",
-          args: [BigInt(agentId)],
-        });
-        const tokenId = Number(token);
-        requireValue(
-          Number.isSafeInteger(tokenId),
-          503,
-          "RPC_UNAVAILABLE",
-          "Invalid muse binding.",
-        );
-        return { standard, contract: contract.toLowerCase(), tokenId };
-      }),
-    verifyMessage: (address, message, signature) =>
-      read(async () => {
-        // viem can catch call failures while trying EOA recovery. Observe the
-        // transport per verification so an outage cannot become "invalid".
-        let rpcFailed = false;
-        const verifier = makeClient((error) => {
+    verifyMessage: (address, message, signature) => {
+      let rpcFailed = false;
+      return read(
+        async (client) => {
+          let valid = false;
+          try {
+            valid = await client.verifyMessage({
+              address: address as Address,
+              message,
+              signature,
+            });
+          } catch {
+            // Malformed and non-matching signatures are ordinary invalid proofs.
+          }
+          if (rpcFailed) throw unavailable();
+          return valid;
+        },
+        (error) => {
+          // viem can catch call failures while trying EOA recovery. Observe the
+          // transport per verification so an outage cannot become "invalid".
           if (
-            error instanceof BaseError &&
-            error.walk(
-              (cause) =>
-                cause instanceof HttpRequestError ||
-                cause instanceof TimeoutError ||
-                (cause instanceof RpcRequestError &&
-                  cause.code !== ExecutionRevertedError.code &&
-                  !ExecutionRevertedError.nodeMessage.test(
-                    cause.details.toLowerCase(),
-                  )),
-            ) instanceof BaseError
+            error instanceof ApiError ||
+            (error instanceof BaseError &&
+              error.walk(
+                (cause) =>
+                  cause instanceof HttpRequestError ||
+                  cause instanceof TimeoutError ||
+                  (cause instanceof RpcRequestError &&
+                    cause.code !== ExecutionRevertedError.code &&
+                    !ExecutionRevertedError.nodeMessage.test(
+                      cause.details.toLowerCase(),
+                    )),
+              ) instanceof BaseError)
           )
             rpcFailed = true;
-        });
-        let valid = false;
-        try {
-          valid = await verifier.verifyMessage({
-            address: address as Address,
-            message,
-            signature,
-          });
-        } catch {
-          // Malformed and non-matching signatures are ordinary invalid proofs.
-        }
-        if (rpcFailed) throw unavailable();
-        return valid;
-      }),
+        },
+      );
+    },
   };
 }

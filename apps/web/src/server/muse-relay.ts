@@ -1,3 +1,4 @@
+import { recoverMessageAddress } from "viem";
 import {
   elsewhereLine,
   flockClaimLine,
@@ -12,7 +13,7 @@ import { rateLimit, type Actor } from "./auth";
 import { id } from "./crypto";
 import { withDatabase, type Database } from "./database";
 import { ApiError, requireValue } from "./errors";
-import { keeperMuse, type MuseDeps } from "./muses";
+import { endIfTransferred, keeperMuse, type MuseDeps } from "./muses";
 import type { MuseBindingRow, MuseReportRow, MuseSignatureRow } from "./schema";
 
 function withinWindow(at: number | null): boolean {
@@ -132,12 +133,22 @@ export async function submitSignature(
     "LINE_NOT_PENDING",
     "This line is not waiting for a signature.",
   );
+  let localSigner: string | undefined;
+  try {
+    localSigner = await recoverMessageAddress({
+      message: rebuilt.line,
+      signature: body.signature as `0x${string}`,
+    });
+  } catch {
+    /* Contract proofs fall through to ERC-1271. */
+  }
   requireValue(
-    await deps.chain.verifyMessage(
-      body.signer,
-      rebuilt.line,
-      body.signature as `0x${string}`,
-    ),
+    localSigner?.toLowerCase() === body.signer.toLowerCase() ||
+      (await deps.chain.verifyMessage(
+        body.signer,
+        rebuilt.line,
+        body.signature as `0x${string}`,
+      )),
     403,
     "SIGNATURE_INVALID",
     "The signature does not match this line.",
@@ -179,6 +190,15 @@ export async function relayPending(
           await db.query("SELECT pg_advisory_xact_lock(8004,0)");
           // Reports lock binding → signatures too. Re-read after both lock waits;
           // the candidate snapshot cannot authorize an HTTP request.
+          const hint = await db.one<MuseBindingRow>(
+            "SELECT * FROM musecity.muse_bindings WHERE id=$1",
+            [candidate.binding_id],
+          );
+          if (hint && !hint.ended_at) {
+            const record = (await deps.musegod.muse(hint.token_id)).value;
+            if (await endIfTransferred(db, deps, hint, record.agent.wallet))
+              return "skip";
+          }
           const binding = await db.one<MuseBindingRow>(
             "SELECT * FROM musecity.muse_bindings WHERE id=$1 FOR UPDATE",
             [candidate.binding_id],

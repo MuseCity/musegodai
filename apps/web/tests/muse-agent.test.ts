@@ -354,18 +354,16 @@ describe("bound muse Agent setup and reports with isolated PostgreSQL", () => {
       });
   });
 
-  it("rechecks linked-address controllers using the stored immutable 8004 id", async () => {
+  it("rechecks the current OpenSea owner independently of the unused 8004 id", async () => {
     const f = withMuses(fixture()),
       ag = await connect(f);
-    f.chain.bindingOf.mockClear();
     f.records.get(1)!.agent.agentId = 999999;
-    f.controllers.set(6592, new Set([addresses.external]));
+    f.setOwner(1, addresses.external);
     expect(
       (await report(f, ag.token, { step: "soul", status: "done" })).status,
     ).toBe(200);
-    expect(f.chain.bindingOf).not.toHaveBeenCalled();
-    expect(f.chain.isController).toHaveBeenCalledWith(6592, addresses.external);
-    f.controllers.set(6592, new Set());
+    expect(f.ownership.ownerOf).toHaveBeenCalledWith(1);
+    f.owners.set(1, addresses.stranger);
     expect(
       await report(f, ag.token, { step: "look", status: "done" }),
     ).toMatchObject({
@@ -380,7 +378,7 @@ describe("bound muse Agent setup and reports with isolated PostgreSQL", () => {
     const body = { step: "soul", status: "done" },
       key = crypto.randomUUID();
     expect((await report(f, ag.token, body, key)).status).toBe(200);
-    f.controllers.set(6592, new Set());
+    f.owners.set(1, addresses.stranger);
     expect(await report(f, ag.token, body, key)).toMatchObject({
       status: 403,
       data: { error: { code: "NOT_MUSE_KEEPER" } },
@@ -391,8 +389,8 @@ describe("bound muse Agent setup and reports with isolated PostgreSQL", () => {
       ),
     );
     expect(await report(f, ag.token, body, key)).toMatchObject({
-      status: 403,
-      data: { error: { code: "MUSE_NOT_BOUND" } },
+      status: 401,
+      data: { error: { code: "CREDENTIAL_REVOKED" } },
     });
   });
 

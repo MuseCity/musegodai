@@ -9,8 +9,12 @@ import {
 import {
   robinhoodEndpoints,
   retryableRpc,
-  rpcCauses,
-  logRpcFallback,
+  rpcAttempt,
+  logRpcFailure,
+  coolDownRpc,
+  type RpcAttempt,
+  hasVerifiedRpcChain,
+  rememberRpcChain,
 } from "./rpc";
 import {
   governanceRules,
@@ -136,21 +140,29 @@ export function privyWalletServices(
       }
     },
     async balance(address, rules) {
-      let endpointLabel = "public";
+      const attempts: RpcAttempt[] = [];
       try {
         // Keep the batch request-scoped. A shared scheduler can combine I/O
         // owned by different Cloudflare Worker request contexts.
         const endpoints = robinhoodEndpoints(rpcUrl);
         for (const [index, endpoint] of endpoints.entries()) {
-          endpointLabel =
-            endpoints.length > 1 && index === 0 ? "configured" : "public";
           try {
+            const checkChain = !hasVerifiedRpcChain(endpoint, rules.chainId);
             const response = await fetch(endpoint, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               signal: AbortSignal.timeout(8000),
               body: JSON.stringify([
-                { jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] },
+                ...(checkChain
+                  ? [
+                      {
+                        jsonrpc: "2.0",
+                        id: 1,
+                        method: "eth_chainId",
+                        params: [],
+                      },
+                    ]
+                  : []),
                 {
                   jsonrpc: "2.0",
                   id: 2,
@@ -175,7 +187,7 @@ export function privyWalletServices(
               });
             const replies: unknown = await response.json();
             requireValue(
-              Array.isArray(replies) && replies.length === 2,
+              Array.isArray(replies) && replies.length === (checkChain ? 2 : 1),
               503,
               "RPC_UNAVAILABLE",
               "Invalid RPC response.",
@@ -186,9 +198,13 @@ export function privyWalletServices(
               );
               const value = matches[0];
               if (value?.error) {
-                const code = (value.error as { code?: unknown }).code;
+                const { code, message } = value.error as {
+                  code?: unknown;
+                  message?: unknown;
+                };
                 throw Object.assign(new Error("RPC method failed"), {
                   code: typeof code === "number" ? code : undefined,
+                  details: typeof message === "string" ? message : undefined,
                 });
               }
               requireValue(
@@ -202,37 +218,32 @@ export function privyWalletServices(
               );
               return value!.result as string;
             };
-            requireValue(
-              BigInt(result(1)) === BigInt(rules.chainId),
-              503,
-              "RPC_UNAVAILABLE",
-              "Wrong network.",
-            );
+            if (checkChain) {
+              requireValue(
+                BigInt(result(1)) === BigInt(rules.chainId),
+                503,
+                "RPC_UNAVAILABLE",
+                "Wrong network.",
+              );
+              rememberRpcChain(endpoint, rules.chainId);
+            }
             return decodeFunctionResult({
               abi: erc20Abi,
               functionName: "balanceOf",
               data: result(2) as `0x${string}`,
             });
           } catch (error) {
-            if (
-              error instanceof ApiError ||
-              !retryableRpc(error) ||
-              index === endpoints.length - 1
-            )
-              throw error;
-            logRpcFallback(error);
+            attempts.push(rpcAttempt(endpoint, error));
+            if (!(error instanceof ApiError) && retryableRpc(error)) {
+              coolDownRpc(endpoint, error);
+              if (index < endpoints.length - 1) continue;
+            }
+            throw error;
           }
         }
         throw new Error("No RPC endpoint available.");
-      } catch (error) {
-        // Never include provider messages, URLs, payloads or wallet addresses.
-        console.error(
-          JSON.stringify({
-            event: "wallet.balance.failed",
-            endpoint: endpointLabel,
-            causes: rpcCauses(error),
-          }),
-        );
+      } catch {
+        logRpcFailure(attempts);
         throw new ApiError(
           503,
           "RPC_UNAVAILABLE",

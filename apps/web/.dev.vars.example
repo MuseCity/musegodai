@@ -3,5 +3,7 @@ PRIVY_APP_ID=
 PRIVY_APP_SECRET=
 # Optional server-only Robinhood mainnet RPC. Deploy as a Worker Secret.
 ROBINHOOD_RPC_URL=
+# Server-only NFT ownership lookup. Deploy as a Worker Secret.
+OPENSEA_API_KEY=
 # Optional for dev:cloud only: dedicated runtime role, never the postgres admin.
 SUPABASE_DATABASE_URL=

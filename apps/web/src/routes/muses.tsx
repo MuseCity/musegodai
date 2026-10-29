@@ -72,6 +72,7 @@ const filters = [
   ["awake", "Awake"],
   ["complete", "Fully set up"],
   ["not_started", "Not started"],
+  ["mine", "Mine"],
 ] as const;
 export default function MusesPage() {
   const location = useLocation();
@@ -153,18 +154,22 @@ function Directory() {
         </div>
       </div>
       <nav className="kind-filters" aria-label="Filter muses">
-        {[...filters, ...(auth.userId || mine ? [["mine", "Mine"]] : [])].map(
-          ([value, label]) => (
-            <Link
-              className={"chip " + (filter === value ? "chosen" : "")}
-              aria-current={filter === value ? "page" : undefined}
-              to={filterHref(value)}
-              key={value}
-            >
-              {label}
-            </Link>
-          ),
-        )}
+        {filters.map(([value, label]) => (
+          <Link
+            className={"chip " + (filter === value ? "chosen" : "")}
+            aria-current={filter === value ? "page" : undefined}
+            to={filterHref(value)}
+            onClick={(event) => {
+              if (value === "mine" && !auth.userId) {
+                event.preventDefault();
+                auth.login();
+              }
+            }}
+            key={value}
+          >
+            {label}
+          </Link>
+        ))}
       </nav>
       {mine && !auth.userId ? (
         <div className="muse-panel">

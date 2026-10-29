@@ -93,6 +93,15 @@
 .muse-panel h2 {
   margin-bottom: 8px;
 }
+.muse-keeper-prompt {
+  margin-top: 26px;
+}
+.muse-keeper-prompt > .primary {
+  margin-top: 14px;
+}
+.muse-keeper-prompt > p:last-child {
+  margin-top: 14px;
+}
 .muse-note,
 .muse-safety {
   color: var(--color-muted);
@@ -102,9 +111,6 @@
   display: grid;
   gap: 20px;
   min-width: 0;
-}
-.muse-sidebar .primary {
-  margin-top: 16px;
 }
 .muse-keeper-columns {
   grid-template-areas: "start needs" "checklist needs" "posts needs";
@@ -117,9 +123,6 @@
 }
 .muse-keeper-columns .muse-sidebar {
   grid-area: posts;
-}
-.muse-keeper-columns .muse-visitor-cta {
-  display: none;
 }
 .muse-needs {
   grid-area: needs;

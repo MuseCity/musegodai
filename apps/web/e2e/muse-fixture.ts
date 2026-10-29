@@ -112,22 +112,12 @@ export const fixtureMusegod: MusegodServices = {
     return { status: 200, code: null };
   },
 };
-export const fixtureMuseChain: MuseChain = {
-  async headBlock() {
-    return 0n;
-  },
-  async transferredTokens() {
-    return [];
-  },
-  async ownerOf(id) {
+export const fixtureOwnership = {
+  async ownerOf(id: number) {
     return records.get(id)?.owner ?? other;
   },
-  async isController(id, address) {
-    return id === 6592 && address.toLowerCase() === owner;
-  },
-  async bindingOf(id) {
-    return { standard: 0, contract: museContract, tokenId: id - 6591 };
-  },
+};
+export const fixtureMuseChain: MuseChain = {
   async verifyMessage(address, message, signature) {
     return (
       address.toLowerCase() === owner &&

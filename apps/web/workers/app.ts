@@ -14,6 +14,7 @@ export default {
       sweepMuseTransfers(services.connectionString, {
         musegod: services.musegod!,
         chain: services.museChain!,
+        ownership: services.ownership!,
         wallets: services.wallets!,
         origin: services.origin,
       }),

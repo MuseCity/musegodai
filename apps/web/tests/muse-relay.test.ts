@@ -26,7 +26,6 @@ function setup() {
   const address = wallet.address.toLowerCase();
   f.setOwner(1, address);
   f.linked.set("did:privy:alice", [address]);
-  f.controllers.set(6592, new Set([address]));
   const musegod = {
     ...f.musegod,
     postWorlds: vi
@@ -37,6 +36,7 @@ function setup() {
   const deps: MuseDeps = {
     musegod,
     chain: f.chain,
+    ownership: f.ownership,
     wallets: f.wallets,
     origin: f.services.origin,
   };
@@ -143,7 +143,7 @@ describe("keeper signatures and request-driven relay with isolated PostgreSQL", 
       status: 200,
       data: { state: "queued" },
     });
-    expect(f.chain.bindingOf).toHaveBeenCalledTimes(1);
+    expect(f.ownership.ownerOf).toHaveBeenCalledWith(1);
     expect(await drain(f)).toEqual({ sent: 1, left: 0 });
     expect(f.musegod.postWorlds).toHaveBeenCalledExactlyOnceWith(1, {
       place: "terrakin",
@@ -647,7 +647,6 @@ describe("keeper signatures and request-driven relay with isolated PostgreSQL", 
     expect((await submit(f, body, { token })).status).toBe(403);
     const bob = controller();
     f.linked.set("did:privy:bob", [bob.address.toLowerCase()]);
-    f.controllers.get(6592)!.add(bob.address.toLowerCase());
     expect(
       await submit(
         f,
@@ -662,12 +661,12 @@ describe("keeper signatures and request-driven relay with isolated PostgreSQL", 
       ),
     ).toMatchObject({
       status: 403,
-      data: { error: { code: "MUSE_NOT_BOUND" } },
+      data: { error: { code: "NOT_MUSE_KEEPER" } },
     });
     expect((await submit(f, body, { key })).status).toBe(200);
     expect((await submit(f, body, { key })).status).toBe(200);
     expect(await rows()).toHaveLength(1);
-    f.controllers.get(6592)!.clear();
+    f.owners.set(1, "0x5555555555555555555555555555555555555555");
     expect(await submit(f, body, { key })).toMatchObject({
       status: 403,
       data: { error: { code: "NOT_MUSE_KEEPER" } },

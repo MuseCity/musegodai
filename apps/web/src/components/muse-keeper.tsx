@@ -10,7 +10,7 @@ import { useAuth } from "./auth";
 import { ClientError, errorMessage, useApi } from "./api";
 import { Notice } from "./ui";
 import type { Profile } from "../shared/contracts";
-import { museInvite } from "../shared/muses";
+import { museInvite, ownershipUnavailableMessage } from "../shared/muses";
 import type {
   KeeperView,
   MuseView,
@@ -38,6 +38,7 @@ export function MuseKeeper({
   const [keeper, setKeeper] = useState<KeeperView | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [notKeeper, setNotKeeper] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [code, setCode] = useState<StartResult | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -67,6 +68,7 @@ export function MuseKeeper({
       if (background && fetching.current) return;
       fetching.current++;
       const request = ++reads.current;
+      if (!background) setChecking(true);
       try {
         const result = await api<KeeperView>(path);
         if (!alive.current || request !== reads.current) return;
@@ -84,6 +86,7 @@ export function MuseKeeper({
         if (alive.current && request === reads.current) throw cause;
       } finally {
         fetching.current--;
+        if (alive.current && request === reads.current) setChecking(false);
       }
     },
     [api, path, onRefresh],
@@ -101,8 +104,25 @@ export function MuseKeeper({
       setCode(null);
       setFallback("");
       setError("");
-    } else setError(errorMessage(cause));
+    } else {
+      setNotKeeper(false);
+      setError(
+        cause instanceof ClientError && cause.code === "OWNERSHIP_UNAVAILABLE"
+          ? ownershipUnavailableMessage
+          : errorMessage(cause),
+      );
+    }
   }, []);
+
+  async function retry() {
+    setError("");
+    setActionError(null);
+    try {
+      await refresh();
+    } catch (cause) {
+      failed(cause);
+    }
+  }
 
   function actionFailed(action: string, cause: unknown) {
     if (alive.current)
@@ -336,38 +356,105 @@ export function MuseKeeper({
 
   return (
     <>
-      {notKeeper && (
-        <p className="muse-note mt-5">
-          <button
-            type="button"
-            className="text-link"
-            onClick={() => session.link("wallet")}
-          >
-            Holding {muse.name}? Link the wallet that holds it
-          </button>
-        </p>
+      {!keeper && (
+        <section
+          className="muse-panel muse-keeper-prompt"
+          aria-labelledby="muse-keeper-prompt-title"
+        >
+          {!session.userId ? (
+            <>
+              <h2 id="muse-keeper-prompt-title">Is {muse.name} yours?</h2>
+              <p>
+                Connect the wallet that holds {muse.name} to wake it up. Your
+                Muse does the rest.
+              </p>
+              <button
+                type="button"
+                className="primary"
+                disabled={!session.ready || !session.configured}
+                onClick={session.login}
+              >
+                Connect wallet
+              </button>
+            </>
+          ) : checking || (!notKeeper && !error) ? (
+            <h2 id="muse-keeper-prompt-title" role="status">
+              Checking whether you hold {muse.name}…
+            </h2>
+          ) : error ? (
+            <>
+              <h2 id="muse-keeper-prompt-title">
+                Can't check your keeper wallet
+              </h2>
+              <Notice>{error}</Notice>
+              <button
+                type="button"
+                className="primary muse-keeper-refresh"
+                onClick={() => void retry()}
+              >
+                Try again
+              </button>
+            </>
+          ) : (
+            <>
+              <h2 id="muse-keeper-prompt-title">Is {muse.name} yours?</h2>
+              <p>None of the wallets on your account holds {muse.name}.</p>
+              <div className="muse-actions">
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => session.link("wallet")}
+                >
+                  Connect the wallet that holds {muse.name}
+                </button>
+                <button
+                  type="button"
+                  className="secondary muse-keeper-refresh"
+                  onClick={() => void retry()}
+                >
+                  Check again
+                </button>
+              </div>
+            </>
+          )}
+          <p>
+            {session.userId ? (
+              <Link className="text-link" to="/muses?filter=mine">
+                Find my muses
+              </Link>
+            ) : (
+              <button
+                type="button"
+                className="text-link"
+                disabled={!session.ready || !session.configured}
+                onClick={session.login}
+              >
+                Find my muses
+              </button>
+            )}
+          </p>
+        </section>
       )}
-      {error && (
+      {keeper && error && (
         <div className="muse-keeper-error">
           <Notice>{error}</Notice>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => void retry()}
+          >
+            Try again
+          </button>
         </div>
       )}
-      {session.userId && (
+      {keeper && (
         <button
           type="button"
           className="text-link muse-keeper-refresh mt-4"
-          disabled={!!busy}
-          onClick={async () => {
-            setError("");
-            setActionError(null);
-            try {
-              await refresh();
-            } catch (cause) {
-              failed(cause);
-            }
-          }}
+          disabled={!!busy || checking}
+          onClick={() => void retry()}
         >
-          {notKeeper ? "Recheck keeper wallet" : "Refresh setup"}
+          Refresh setup
         </button>
       )}
       <div className={`muse-columns${keeper ? " muse-keeper-columns" : ""}`}>
@@ -574,7 +661,7 @@ export function MuseKeeper({
                 return (
                   <li key={report.step} data-waiting={waiting}>
                     {report.step === "soul"
-                      ? `Became ${muse.name}`
+                      ? "Woke up"
                       : report.step === "look"
                         ? `Took ${muse.name}'s name and look`
                         : report.step}

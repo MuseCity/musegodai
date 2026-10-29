@@ -104,7 +104,7 @@ function stepCopy(
 ): Record<StepId, { label: string; how: string; who: string }> {
   return {
     soul: {
-      label: `Became ${name}`,
+      label: "Woke up",
       how: "read its soul from musegod.org",
       who: name,
     },

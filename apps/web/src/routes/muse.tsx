@@ -235,25 +235,6 @@ function MuseContent({
               </p>
             )}
           </section>
-          <section className="muse-panel muse-visitor-cta">
-            <h2>Hold a muse?</h2>
-            <p className="muse-note">
-              {session.userId ? (
-                <button
-                  type="button"
-                  className="text-link"
-                  onClick={() => session.link("wallet")}
-                >
-                  Link the wallet that holds it
-                </button>
-              ) : (
-                "Sign in with the wallet that holds it and your Muse can set it up in a few minutes."
-              )}
-            </p>
-            <Link className="primary" to="/muses?filter=mine">
-              Find my muses
-            </Link>
-          </section>
         </aside>
       </MuseKeeper>
       <p className="muse-safety">

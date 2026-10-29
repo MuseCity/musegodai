@@ -18,11 +18,12 @@ import {
   type NeedsFacts,
   type StepFacts,
 } from "../shared/muse-steps";
-import { connectionStatus, createConnection } from "./agents";
+import { connectionStatus, createConnection, revokeAgent } from "./agents";
 import type { Actor } from "./auth";
 import { digest, id, secret } from "./crypto";
 import type { Database } from "./database";
-import { requireValue } from "./errors";
+import { ApiError, requireValue } from "./errors";
+import type { OwnershipServices } from "./opensea";
 import type { MuseChain } from "./muse-chain";
 import type {
   CatalogEntry,
@@ -42,17 +43,17 @@ import type { WalletServices } from "./wallets";
 export type MuseDeps = {
   musegod: MusegodServices;
   chain: MuseChain;
+  ownership: OwnershipServices;
   wallets: WalletServices;
   origin: string;
 };
 
 export function bindingStillHeld(i: {
   ownerOf: string;
-  holder: string;
   linked: string[];
   agentWallet: string | null;
 }): boolean {
-  return [i.holder, ...i.linked, i.agentWallet].some(
+  return [...i.linked, i.agentWallet].some(
     (address) => address?.toLowerCase() === i.ownerOf.toLowerCase(),
   );
 }
@@ -92,6 +93,9 @@ async function endBinding(
   binding: MuseBindingRow,
   reason: "transferred" | "restarted",
 ) {
+  await db.query("SELECT id FROM musecity.accounts WHERE id=$1 FOR UPDATE", [
+    binding.account_id,
+  ]);
   // Activation locks the registration before binding its Agent. Cleanup uses
   // the same order, including anonymous transfer checks racing redemption.
   if (binding.registration_id)
@@ -99,10 +103,18 @@ async function endBinding(
       "UPDATE musecity.registrations SET status='cancelled',token_hash=$2 WHERE id=$1 AND status<>'activated'",
       [binding.registration_id, await digest(secret("mcr"))],
     );
+  const current = await db.one<MuseBindingRow>(
+    "SELECT * FROM musecity.muse_bindings WHERE id=$1 AND ended_at IS NULL",
+    [binding.id],
+  );
+  if (!current) return false;
+  if (reason === "transferred" && current.agent_id)
+    await revokeAgent(db, current.account_id, current.agent_id);
   await db.query(
     "UPDATE musecity.muse_bindings SET ended_at=now(),end_reason=$2 WHERE id=$1 AND ended_at IS NULL",
     [binding.id, reason],
   );
+  return true;
 }
 
 async function bindingHeld(
@@ -110,18 +122,19 @@ async function bindingHeld(
   deps: MuseDeps,
   binding: MuseBindingRow,
   agentWallet: string | null,
+  owner?: string,
 ) {
+  if (owner && agentWallet?.toLowerCase() === owner.toLowerCase()) return true;
   const account = await db.one<AccountRow>(
     "SELECT * FROM musecity.accounts WHERE id=$1",
     [binding.account_id],
   );
   const [ownerOf, linked] = await Promise.all([
-    deps.chain.ownerOf(binding.token_id),
+    owner ?? deps.ownership.ownerOf(binding.token_id),
     deps.wallets.linkedAddresses(account!.privy_user_id),
   ]);
   return bindingStillHeld({
     ownerOf,
-    holder: binding.holder_address,
     linked,
     agentWallet,
   });
@@ -132,11 +145,14 @@ export async function endIfTransferred(
   deps: MuseDeps,
   binding: MuseBindingRow,
   agentWallet: string | null,
+  owner?: string,
 ): Promise<boolean> {
-  if (binding.ended_at || (await bindingHeld(db, deps, binding, agentWallet)))
+  if (
+    binding.ended_at ||
+    (await bindingHeld(db, deps, binding, agentWallet, owner))
+  )
     return false;
-  await endBinding(db, binding, "transferred");
-  return true;
+  return endBinding(db, binding, "transferred");
 }
 
 async function currentBinding(
@@ -144,22 +160,24 @@ async function currentBinding(
   deps: MuseDeps,
   record: MuseRecord,
 ) {
-  let binding = await activeBinding(db, record.id);
-  if (
-    binding &&
-    !bindingStillHeld({
-      ownerOf: record.owner,
-      holder: binding.holder_address,
-      linked: [],
-      agentWallet: record.agent.wallet,
-    })
-  ) {
-    // The public upstream is a hint. Only chain ownership and the binding
-    // account's linked addresses can establish that it has changed hands.
-    if (await endIfTransferred(db, deps, binding, record.agent.wallet)) {
-      binding = undefined;
-    }
+  const binding = await activeBinding(db, record.id);
+  if (!binding) return binding;
+  let owner: string;
+  try {
+    owner = await deps.ownership.ownerOf(record.id);
+  } catch {
+    // Public display stays available; authorization and the sweep fail closed.
+    return binding;
   }
+  // Public polls and crawlers need Privy only when ownership has changed.
+  if (
+    [binding.holder_address, record.agent.wallet].some(
+      (address) => address?.toLowerCase() === owner.toLowerCase(),
+    )
+  )
+    return binding;
+  if (await endIfTransferred(db, deps, binding, record.agent.wallet, owner))
+    return undefined;
   return binding;
 }
 
@@ -269,21 +287,27 @@ export async function publicMuse(
   };
 }
 
-async function checkedAgent(deps: MuseDeps, record: MuseRecord) {
-  const agentId8004 = record.agent.agentId;
-  const binding = await deps.chain.bindingOf(agentId8004);
-  requireValue(
-    binding.standard === 0 &&
-      binding.contract.toLowerCase() === museContract &&
-      binding.tokenId === record.id,
-    503,
-    "MUSE_BINDING_INVALID",
-    "The muse's agent binding could not be verified.",
-  );
-  return agentId8004;
+// Only this internal rejection commits transfer cleanup before returning 403.
+export class KeeperTransferredError extends ApiError {
+  constructor() {
+    super(
+      403,
+      "NOT_MUSE_KEEPER",
+      "None of your linked wallets holds this muse.",
+    );
+  }
 }
-
-async function controlled(deps: MuseDeps, a: Actor, agentId8004: number) {
+async function keeperControllers(
+  db: Database,
+  deps: MuseDeps,
+  a: Actor,
+  record: MuseRecord,
+) {
+  const owner = (await deps.ownership.ownerOf(record.id)).toLowerCase();
+  const binding = await activeBinding(db, record.id);
+  const ended = binding
+    ? await endIfTransferred(db, deps, binding, record.agent.wallet, owner)
+    : false;
   const linked = [
     ...new Set(
       (await deps.wallets.linkedAddresses(a.account.privy_user_id)).map(
@@ -291,43 +315,33 @@ async function controlled(deps: MuseDeps, a: Actor, agentId8004: number) {
       ),
     ),
   ];
-  const checks = await Promise.all(
-    linked.map((address) => deps.chain.isController(agentId8004, address)),
-  );
-  const controllers = linked.filter((_, index) => checks[index]);
-  requireValue(
-    controllers.length,
-    403,
-    "NOT_MUSE_KEEPER",
-    "None of your linked wallets controls this muse.",
-  );
-  return { agentId8004, controllers };
+  const controllers = linked.filter((address) => address === owner);
+  const agentHeld =
+    !ended &&
+    binding?.account_id === a.account.id &&
+    record.agent.wallet?.toLowerCase() === owner;
+  if (!controllers.length && !agentHeld) {
+    if (ended) throw new KeeperTransferredError();
+    throw new ApiError(
+      403,
+      "NOT_MUSE_KEEPER",
+      "None of your linked wallets holds this muse.",
+    );
+  }
+  return { agentId8004: record.agent.agentId, controllers, owner };
 }
-
 export async function controllersFor(
-  deps: MuseDeps,
-  a: Actor,
-  tokenId: number,
-): Promise<{ agentId8004: number; controllers: string[] }> {
-  requireId(tokenId);
-  const record = (await deps.musegod.muse(tokenId)).value;
-  return controlled(deps, a, await checkedAgent(deps, record));
-}
-
-async function keeperControllers(
   db: Database,
   deps: MuseDeps,
   a: Actor,
-  record: MuseRecord,
+  tokenId: number,
 ) {
-  const stored = await db.one<{ agent_id_8004: number }>(
-    "SELECT agent_id_8004 FROM musecity.muse_bindings WHERE token_id=$1 ORDER BY started_at DESC,id DESC LIMIT 1",
-    [record.id],
-  );
-  return controlled(
+  requireId(tokenId);
+  return keeperControllers(
+    db,
     deps,
     a,
-    stored?.agent_id_8004 ?? (await checkedAgent(deps, record)),
+    (await deps.musegod.muse(tokenId)).value,
   );
 }
 
@@ -342,7 +356,12 @@ export async function startMuse(
   // replacement per token, including the case with no existing binding row.
   await db.query("SELECT pg_advisory_xact_lock(8004,$1)", [tokenId]);
   const record = (await deps.musegod.muse(tokenId)).value;
-  const { agentId8004 } = await keeperControllers(db, deps, a, record);
+  const { agentId8004, owner: holder } = await keeperControllers(
+    db,
+    deps,
+    a,
+    record,
+  );
   const binding = await activeBinding(db, tokenId);
   if (binding) {
     if (binding.account_id === a.account.id)
@@ -357,7 +376,6 @@ export async function startMuse(
       await endBinding(db, binding, "transferred");
     }
   }
-  const holder = await deps.chain.ownerOf(tokenId);
   const connection = await createConnection(db, a, record.name, {
     tokenId,
     agentId8004,
@@ -382,7 +400,7 @@ export async function keeperMuse(
   requireId(tokenId);
   const record = (await deps.musegod.muse(tokenId)).value;
   const { controllers } = await keeperControllers(db, deps, a, record);
-  const current = await currentBinding(db, deps, record);
+  const current = await activeBinding(db, record.id);
   const binding = current?.account_id === a.account.id ? current : undefined;
   const local = await localFacts(db, binding);
   const count = await db.one<{ n: string }>(
@@ -608,7 +626,7 @@ export async function restartMuse(
   await db.query("SELECT pg_advisory_xact_lock(8004,$1)", [tokenId]);
   const record = (await deps.musegod.muse(tokenId)).value;
   await keeperControllers(db, deps, a, record);
-  const binding = await currentBinding(db, deps, record);
+  const binding = await activeBinding(db, record.id);
   if (binding) {
     requireValue(
       binding.account_id === a.account.id,

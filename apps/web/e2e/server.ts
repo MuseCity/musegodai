@@ -18,6 +18,7 @@ import { governanceRules } from "../src/shared/governance";
 import { fixtureWebsiteVerifier } from "./originality-fixture";
 import {
   fixtureMusegod,
+  fixtureOwnership,
   fixtureMuseChain,
   seedMuseFixture,
 } from "./muse-fixture";
@@ -53,6 +54,7 @@ const api = createApi({
   origin: "http://127.0.0.1:5191",
   musegod: fixtureMusegod,
   museChain: fixtureMuseChain,
+  ownership: fixtureOwnership,
   verifyWebsite: fixtureWebsiteVerifier(local.e2eUrl),
   images: { process: localImageProcessor, origin: "http://127.0.0.1:5191" },
   wallets: {

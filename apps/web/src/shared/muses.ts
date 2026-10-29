@@ -242,3 +242,6 @@ export type StartResult = {
   expiresAt: string;
   line: string;
 };
+
+export const ownershipUnavailableMessage =
+  "We can't check who holds this muse right now. This isn't a problem with your wallet. Please try again in a minute.";

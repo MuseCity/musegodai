@@ -1,40 +1,115 @@
-import { describe, expect, it } from "vitest";
-import { HttpRequestError, RpcRequestError, TimeoutError } from "viem";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  publicRobinhoodRpc,
-  robinhoodEndpoints,
-  retryableRpc,
-} from "../src/server/rpc";
+  CallExecutionError,
+  ExecutionRevertedError,
+  HttpRequestError,
+  InternalRpcError,
+  LimitExceededRpcError,
+  RpcRequestError,
+  TimeoutError,
+} from "viem";
+
+let rpc: typeof import("../src/server/rpc");
+const publicEndpoints = [
+  "https://rpc.mainnet.chain.robinhood.com",
+  "https://robinhood.drpc.org",
+  "https://robinhood-rpc.publicnode.com",
+];
+const configured = "https://configured.example.test/rpc";
+beforeEach(async () => {
+  vi.resetModules();
+  rpc = await import("../src/server/rpc");
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe("Robinhood RPC policy", () => {
-  it("uses configured HTTPS first, de-duplicates and drops invalid configuration", () => {
-    expect(robinhoodEndpoints("https://a")).toEqual([
-      "https://a",
-      publicRobinhoodRpc,
+  it("orders configured HTTPS before all three public endpoints and de-duplicates normalized URLs", () => {
+    expect(rpc.robinhoodEndpoints(configured)).toEqual([
+      configured,
+      ...publicEndpoints,
     ]);
-    expect(robinhoodEndpoints(publicRobinhoodRpc)).toEqual([
-      publicRobinhoodRpc,
-    ]);
+    for (const endpoint of publicEndpoints) {
+      expect(rpc.robinhoodEndpoints(endpoint)).toEqual([
+        endpoint,
+        ...publicEndpoints.filter((url) => url !== endpoint),
+      ]);
+      expect(rpc.robinhoodEndpoints(endpoint + "/")).toHaveLength(3);
+    }
     for (const value of [undefined, "", "http://a", "ws://a", "invalid"])
-      expect(robinhoodEndpoints(value)).toEqual([publicRobinhoodRpc]);
+      expect(rpc.robinhoodEndpoints(value)).toEqual(publicEndpoints);
   });
 
-  it("retries only rate limits, server failures, timeout and network causes", () => {
-    const url = "https://rpc.example.test/fake-key";
-    for (const status of [429, 500, 503, 599]) {
-      expect(retryableRpc({ status })).toBe(true);
-      expect(retryableRpc(new HttpRequestError({ url, status }))).toBe(true);
-    }
+  it.each([403, 408, 429, 500, 503, 599])(
+    "retries HTTP %s including viem wrappers",
+    (status) => {
+      expect(rpc.retryableRpc({ status })).toBe(true);
+      expect(
+        rpc.retryableRpc(new HttpRequestError({ url: configured, status })),
+      ).toBe(true);
+    },
+  );
+
+  it.each([
+    { code: -32005, message: "limit exceeded" },
+    { code: -32603, message: "internal error" },
+    ...[
+      "RATE exceeded",
+      "daily limit reached",
+      "the network is busy",
+      "capacity exhausted",
+    ].map((message) => ({ code: -32000, message })),
+  ])(
+    "retries node errors $code: $message including nested viem causes",
+    (error) => {
+      expect(rpc.retryableRpc(error)).toBe(true);
+      expect(
+        rpc.retryableRpc(
+          new RpcRequestError({ url: configured, body: {}, error }),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("retries viem limit/internal errors, timeouts and network causes", () => {
     for (const error of [
+      new LimitExceededRpcError(new Error("unavailable")),
+      new InternalRpcError(new Error("unavailable")),
       new TypeError("fetch failed"),
       new DOMException("timeout", "TimeoutError"),
       new DOMException("aborted", "AbortError"),
-      new TimeoutError({ url, body: {} }),
-      new HttpRequestError({ url, cause: new TypeError("offline") }),
+      new TimeoutError({ url: configured, body: {} }),
+      new HttpRequestError({
+        url: configured,
+        cause: new TypeError("offline"),
+      }),
       { cause: { code: "ECONNRESET" } },
       { code: 429 },
     ])
-      expect(retryableRpc(error)).toBe(true);
+      expect(rpc.retryableRpc(error)).toBe(true);
+  });
+
+  it("does not retry execution reverts, even when their reason mentions a limit", () => {
+    const revert = new ExecutionRevertedError({
+      message: "execution reverted: owner limit",
+    });
+    for (const error of [
+      revert,
+      new CallExecutionError(revert, {}),
+      { code: 3, message: "execution reverted" },
+      { code: -32000, message: "execution reverted: capacity limit" },
+      new RpcRequestError({
+        url: configured,
+        body: {},
+        error: { code: -32000, message: "execution reverted: rate limit" },
+      }),
+    ])
+      expect(rpc.retryableRpc(error)).toBe(false);
+  });
+
+  it("rejects validation, malformed responses and unrelated failures", () => {
     for (const error of [
       null,
       "offline",
@@ -42,16 +117,14 @@ describe("Robinhood RPC policy", () => {
       new SyntaxError("bad JSON"),
       { status: 400 },
       { status: 401 },
-      { status: 403 },
       { code: -32602 },
-      new HttpRequestError({ url, status: 403 }),
-      new HttpRequestError({ url, cause: new SyntaxError("bad JSON") }),
-      new RpcRequestError({
-        url,
-        body: {},
-        error: { code: -32603, message: "internal error" },
+      { code: -32000, message: "invalid input" },
+      new HttpRequestError({ url: configured, status: 401 }),
+      new HttpRequestError({
+        url: configured,
+        cause: new SyntaxError("bad JSON"),
       }),
     ])
-      expect(retryableRpc(error)).toBe(false);
+      expect(rpc.retryableRpc(error)).toBe(false);
   });
 });

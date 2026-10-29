@@ -35,6 +35,7 @@ const step = (data: any, id: string) =>
 const museDeps = (f: Fixture) => ({
   musegod: f.musegod,
   chain: f.chain,
+  ownership: f.ownership,
   wallets: f.wallets,
   origin: f.services.origin,
 });
@@ -165,7 +166,7 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
   it("keeper via external linked wallet", async () => {
     const f = withMuses(fixture());
     f.setOwner(1, addresses.external);
-    f.controllers.set(6592, new Set([addresses.external]));
+    f.setOwner(1, addresses.external);
     expect((await start(f)).status).toBe(201);
     expect((await f.call("/me/muses/1")).data.controllers).toEqual([
       addresses.external,
@@ -313,9 +314,11 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
         token: null,
       });
       for (const agents of [directory.data.items, profile.data.agents]) {
-        expect(
-          agents.find((agent: any) => agent.id === bound.data.agentId).muse,
-        ).toBe(muse);
+        const boundCard = agents.find(
+          (agent: any) => agent.id === bound.data.agentId,
+        );
+        if (muse === null) expect(boundCard).toBeUndefined();
+        else expect(boundCard.muse).toBe(muse);
         expect(
           agents.find((agent: any) => agent.id === ordinary.data.agentId).muse,
         ).toBeNull();
@@ -347,14 +350,13 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
     ).toMatchObject({ id: bound.data.agentId, muse: null });
   });
 
-  it("keeper via delegate", async () => {
+  it("a linked delegate without the NFT owner is not a keeper", async () => {
     const f = withMuses(fixture());
-    f.linked.set("did:privy:alice", [addresses.alice, addresses.delegate]);
-    f.controllers.set(6592, new Set([addresses.delegate]));
-    expect((await start(f)).status).toBe(201);
-    expect((await f.call("/me/muses/1")).data.controllers).toEqual([
-      addresses.delegate,
-    ]);
+    f.linked.set("did:privy:alice", [addresses.delegate]);
+    expect(await start(f)).toMatchObject({
+      status: 403,
+      data: { error: { code: "NOT_MUSE_KEEPER" } },
+    });
   });
 
   it("non-keeper gets 403 on every private muse operation", async () => {
@@ -410,6 +412,10 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
     const active = await withDatabase(config.testAdminUrl, (d) =>
       d.transaction(async () => {
         await d.query(
+          "SELECT id FROM musecity.accounts WHERE id=(SELECT owner_account_id FROM musecity.registrations WHERE id=$1) FOR UPDATE",
+          [created.data.connectionId],
+        );
+        await d.query(
           "SELECT id FROM musecity.registrations WHERE id=$1 FOR UPDATE",
           [created.data.connectionId],
         );
@@ -418,7 +424,7 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
           async () => {
             const waiting = await withDatabase(config.testAdminUrl, (other) =>
               other.one<{ n: string }>(
-                "SELECT count(*) AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'UPDATE musecity.registrations SET status=%'",
+                "SELECT count(*) AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM musecity.accounts WHERE id=%'",
               ),
             );
             expect(Number(waiting?.n)).toBe(1);
@@ -454,7 +460,6 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
       registration_id: created.data.connectionId,
       agent_id_8004: 6592,
     });
-    f.chain.bindingOf.mockClear();
     f.musegod.muse.mockResolvedValueOnce({
       value: {
         ...f.records.get(1)!,
@@ -464,11 +469,7 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
       stale: false,
     });
     expect((await f.call("/me/muses/1")).status).toBe(200);
-    expect(f.chain.bindingOf).not.toHaveBeenCalled();
-    expect(f.chain.isController).toHaveBeenLastCalledWith(
-      6592,
-      addresses.external,
-    );
+    expect(f.ownership.ownerOf).toHaveBeenCalledWith(1);
   });
 
   it("steps 3 and 4 come from musegod.ai", async () => {
@@ -524,10 +525,10 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
     expect((await rows())[0].end_reason).toBe("transferred");
     expect(
       (await f.call("/agent", { token: active.data.credential.token })).status,
-    ).toBe(200);
+    ).toBe(401);
   });
 
-  it("confirms apparent transfers on chain and retains other linked wallets", async () => {
+  it("confirms apparent transfers through OpenSea and retains other linked wallets", async () => {
     const f = withMuses(fixture());
     await start(f);
     f.records.get(1)!.owner = addresses.stranger;
@@ -539,20 +540,20 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
       (await f.call("/muses/1", { token: null })).data.startedAt,
     ).not.toBeNull();
     f.owners.set(1, addresses.stranger);
-    f.controllers.set(6592, new Set([addresses.alice]));
-    expect((await f.call("/me/muses/1")).data.binding).toBeNull();
+    expect((await f.call("/me/muses/1")).status).toBe(403);
     expect((await rows())[0].end_reason).toBe("transferred");
   });
 
   it("protects a still-held binding from another account and allows a new keeper after sale", async () => {
     const f = withMuses(fixture());
     const old = await start(f);
-    f.controllers.get(6592)!.add(addresses.bob);
+    f.linked.set("did:privy:bob", [addresses.alice]);
     expect(await start(f, "fixture:bob")).toMatchObject({
       status: 409,
       data: { error: { code: "MUSE_KEPT_ELSEWHERE" } },
     });
     f.setOwner(1, addresses.bob);
+    f.linked.set("did:privy:bob", [addresses.bob]);
     const next = await start(f, "fixture:bob");
     expect(next.status).toBe(201);
     expect(
@@ -853,9 +854,11 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
           "content:read",
         );
         return controllersFor(
+          d,
           {
             musegod: f.musegod,
             chain: f.chain,
+            ownership: f.ownership,
             wallets: f.wallets,
             origin: f.services.origin,
           },
@@ -867,6 +870,7 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
     expect(result).toEqual({
       agentId8004: 6592,
       controllers: [addresses.alice],
+      owner: addresses.alice,
     });
     expect((await start(f, active.data.credential.token)).status).toBe(403);
   });
@@ -905,17 +909,6 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
     expect((await redeem(f, pending.data.otp)).status).toBe(401);
   });
 
-  it("refuses an invalid immutable binding before creating a connection", async () => {
-    const f = withMuses(fixture());
-    f.bindings.set(6592, {
-      standard: 0,
-      contract: addresses.stranger,
-      tokenId: 1,
-    });
-    expect((await start(f)).status).toBe(503);
-    expect(await rows()).toHaveLength(0);
-  });
-
   it("offers only the pot without an active binding owned by the account", async () => {
     const f = withMuses(fixture());
     const check = async (token = "fixture:alice") => {
@@ -945,7 +938,7 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
         [binding.id, addresses.alice],
       );
     });
-    f.controllers.get(6592)!.add(addresses.bob);
+    f.linked.set("did:privy:bob", [addresses.alice]);
     await check("fixture:bob");
     await f.call("/me/muses/1/restart", { method: "POST" });
     await check();
@@ -1021,10 +1014,9 @@ describe("muse pages and keeper bindings with isolated PostgreSQL", () => {
   });
 });
 
-it("bindingStillHeld recognizes the holder, any linked wallet or the muse's agent wallet", () => {
+it("bindingStillHeld recognizes only a currently linked wallet or the muse's agent wallet", () => {
   const input = {
-    holder: addresses.alice,
-    linked: [addresses.external],
+    linked: [addresses.alice, addresses.external],
     agentWallet: addresses.agent,
   };
   for (const ownerOf of [

@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter, RouterContextProvider } from "react-router";
 import { beforeEach, expect, it } from "vitest";
 import { MuseChecklist } from "../src/components/muse-setup";
+import { MuseKeeper } from "../src/components/muse-keeper";
+import { AuthContext, type Session } from "../src/components/auth";
 import { servicesContext } from "../src/context";
 import { loader as directoryLoader } from "../src/routes/muses";
 import { loader as detailLoader } from "../src/routes/muse";
@@ -49,6 +51,59 @@ it("does not redirect or paint public search results as Mine before authenticati
   expect(result.directory.counts.living).toBe(125);
   expect(result.seo.noindex).toBe(true);
 });
+it.each([null, "alice"])(
+  "renders a keeper prompt before any client reads for session %s",
+  async (userId) => {
+    const { view } = await detailLoader(args("/muses/1", "1"));
+    const session: Session = {
+      ready: true,
+      configured: true,
+      userId,
+      evmAddresses: [],
+      linked: [],
+      login() {},
+      link() {},
+      logout: async () => {},
+      token: async () => null,
+      retryWallet: async () => {},
+      signMessage: async () => {
+        throw new Error("Unused");
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(
+          AuthContext,
+          { value: session },
+          createElement(MuseKeeper, {
+            view,
+            onRefresh: async () => {},
+            children: createElement("div", { id: "checklist-marker" }),
+          }),
+        ),
+      ),
+    );
+    expect(html).toContain('class="muse-panel muse-keeper-prompt"');
+    expect(html.indexOf("muse-keeper-prompt")).toBeLessThan(
+      html.indexOf("checklist-marker"),
+    );
+    if (userId) {
+      expect(html).toContain('role="status"');
+      expect(html).toContain("Checking whether you hold Bard…");
+    } else {
+      expect(html).toContain("Is Bard yours?");
+      expect(html).toContain(
+        "Connect the wallet that holds Bard to wake it up. Your Muse does the rest.",
+      );
+      expect(html).toMatch(
+        /<button[^>]*class="primary"[^>]*>Connect wallet<\/button>/,
+      );
+      expect(html).not.toContain('href="/muses?filter=mine"');
+    }
+  },
+);
 it("uses a numbered canonical and ProfilePage metadata, redirecting name references with 301", async () => {
   await expect(detailLoader(args("/muses/bard", "bard"))).rejects.toMatchObject(
     { status: 301 },
@@ -154,4 +209,24 @@ it("uses the shared Muse invite in the start card and its native copy action", (
     /<button\s[^>]*type="button"[^>]*data-muse-invite-copy[\s\S]*?>\s*copy code\s*<\/button>/,
   );
   expect(source).toContain("navigator.clipboard.writeText(museInvite.code)");
+});
+
+it("labels the soul checklist step Woke up while retaining its detail and attribution", () => {
+  const steps = deriveSteps({
+    reports: { soul: "done" },
+    connected: false,
+    helloPostId: null,
+    worlds: {},
+  });
+  const html = renderToStaticMarkup(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(MuseChecklist, { name: "Dipper", steps }),
+    ),
+  );
+  expect(html).toContain("Woke up");
+  expect(html).not.toContain("Became");
+  expect(html).toContain("read its soul from musegod.org");
+  expect(html).toContain("reported by Dipper");
 });

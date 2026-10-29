@@ -6,7 +6,12 @@ import {
 import { audit, type Actor } from "./auth";
 import type { Database } from "./database";
 import { requireValue } from "./errors";
-import { publicMuse, type MuseDeps } from "./muses";
+import {
+  KeeperTransferredError,
+  controllersFor,
+  publicMuse,
+  type MuseDeps,
+} from "./muses";
 import type { MuseBindingRow, MuseReportRow } from "./schema";
 
 // actor() already holds the account lock. Report and relay mutations then lock
@@ -24,8 +29,7 @@ export async function requireMuseAgent(
     "This Agent is not bound to a muse.",
   );
   const binding = await db.one<MuseBindingRow>(
-    "SELECT * FROM musecity.muse_bindings WHERE agent_id=$1 AND account_id=$2 AND ended_at IS NULL" +
-      (lock ? " FOR UPDATE" : ""),
+    "SELECT * FROM musecity.muse_bindings WHERE agent_id=$1 AND account_id=$2 AND ended_at IS NULL",
     [a.agent.id, a.account.id],
   );
   requireValue(
@@ -34,20 +38,17 @@ export async function requireMuseAgent(
     "MUSE_NOT_BOUND",
     "This Agent is not bound to a muse.",
   );
-  const linked = [
-    ...new Set(await deps.wallets.linkedAddresses(a.account.privy_user_id)),
-  ];
-  const controllers = await Promise.all(
-    linked.map((address) =>
-      deps.chain.isController(binding.agent_id_8004, address),
-    ),
-  );
-  requireValue(
-    controllers.some(Boolean),
-    403,
-    "NOT_MUSE_KEEPER",
-    "None of your linked wallets controls this muse.",
-  );
+  await controllersFor(db, deps, a, binding.token_id);
+  if (lock)
+    requireValue(
+      await db.one(
+        "SELECT id FROM musecity.muse_bindings WHERE id=$1 AND ended_at IS NULL FOR UPDATE",
+        [binding.id],
+      ),
+      403,
+      "MUSE_NOT_BOUND",
+      "This Agent is not bound to a muse.",
+    );
   return binding;
 }
 
@@ -60,6 +61,11 @@ export async function agentMuse(
   // Public reads may end a transferred binding and take its registration lock.
   // Do not hold a binding row lock before that existing cleanup path.
   const view = await publicMuse(db, deps, String(binding.token_id));
+  const current = await db.one<{ end_reason: string | null }>(
+    "SELECT end_reason FROM musecity.muse_bindings WHERE id=$1",
+    [binding.id],
+  );
+  if (current?.end_reason === "transferred") throw new KeeperTransferredError();
   requireValue(
     await db.one(
       "SELECT id FROM musecity.muse_bindings WHERE id=$1 AND ended_at IS NULL",

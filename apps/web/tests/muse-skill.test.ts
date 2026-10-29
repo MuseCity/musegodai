@@ -71,7 +71,7 @@ describe("per-muse AI setup document", () => {
     expect(await response.text()).toBe(
       museStartDoc(f.services.origin, f.records.get(1)!),
     );
-    expect(f.chain.ownerOf).not.toHaveBeenCalled();
+    expect(f.ownership.ownerOf).not.toHaveBeenCalled();
     expect(f.wallets.linkedAddresses).not.toHaveBeenCalled();
     for (const id of ["0", "1000", "01", "bard", "1.0"])
       expect(

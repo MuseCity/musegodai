@@ -26,6 +26,7 @@ const configured = {
   PRIVY_APP_ID: vars.PRIVY_APP_ID ?? "",
   PRIVY_APP_SECRET: vars.PRIVY_APP_SECRET ?? "",
   ROBINHOOD_RPC_URL: vars.ROBINHOOD_RPC_URL ?? "",
+  OPENSEA_API_KEY: vars.OPENSEA_API_KEY ?? "",
   SUPABASE_DATABASE_URL: runtime,
   APP_ORIGIN: "http://127.0.0.1:5190",
 };

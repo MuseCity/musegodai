@@ -3,7 +3,10 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import pg from "pg";
 import { assertLocalTarget } from "../scripts/local-target.ts";
-import { museInvite } from "../src/shared/muses.ts";
+import {
+  museInvite,
+  ownershipUnavailableMessage,
+} from "../src/shared/muses.ts";
 
 const origin = "http://127.0.0.1:5191";
 const redirect = await fetch(origin + "/muses/bard", { redirect: "manual" });
@@ -246,6 +249,123 @@ function keyboardReachable(selector, signedIn = false) {
   assert.equal(evaluate("window.__museTabSeen.length"), count.targets);
 }
 try {
+  browser("open", origin + "/muses/259");
+  opened = true;
+  settleLayout();
+  const name = evaluate('document.querySelector("h1").textContent');
+  assert.equal(
+    evaluate('document.querySelector(".muse-keeper-prompt h2")?.textContent'),
+    `Is ${name} yours?`,
+  );
+  assert.equal(
+    evaluate('document.querySelector(".muse-keeper-prompt p")?.textContent'),
+    `Connect the wallet that holds ${name} to wake it up. Your Muse does the rest.`,
+  );
+  assert.equal(
+    evaluate('document.querySelectorAll(".muse-visitor-cta").length'),
+    0,
+  );
+  assert.equal(
+    evaluate('document.querySelectorAll(".muse-keeper-prompt").length'),
+    1,
+  );
+  assert.ok(
+    evaluate(
+      'document.querySelector(".muse-started").nextElementSibling.matches(".muse-keeper-prompt")',
+    ),
+  );
+  keyboardReachable(".muse-keeper-prompt button");
+  evaluate(`(()=>{window.__hotfixReads=0;window.__hotfixReleases=[];window.__walletLinks=[];window.addEventListener('fixture-link',e=>window.__walletLinks.push(e.detail));window.__hotfixMode='delay';const original=window.fetch;window.fetch=async(input,init)=>{
+    if(new URL(typeof input==='string'?input:input.url,location.href).pathname==='/api/v1/me/muses/259'){
+      window.__hotfixReads++;
+      if(window.__hotfixMode==='delay')await new Promise(resolve=>window.__hotfixReleases.push(resolve));
+      if(window.__hotfixMode==='error')return Response.json({error:{code:'OWNERSHIP_UNAVAILABLE',message:'Local keeper check unavailable.'}},{status:503});
+    }
+    return original(input,init);
+  };return true})()`);
+  browser("click", ".muse-keeper-prompt .primary");
+  ready(
+    'window.__hotfixReads>=1 && document.querySelector(".muse-keeper-prompt [role=status]")',
+  );
+  assert.equal(
+    evaluate(
+      'document.querySelector(".muse-keeper-prompt [role=status]").textContent',
+    ),
+    `Checking whether you hold ${name}…`,
+  );
+  const initialKeeperReads = evaluate("window.__hotfixReads");
+  evaluate(
+    "window.__hotfixMode='normal';window.__hotfixReleases.forEach(resolve=>resolve())",
+  );
+  ready('document.querySelector(".muse-keeper-prompt .primary")');
+  assert.equal(
+    evaluate('document.querySelector(".muse-keeper-prompt p").textContent'),
+    `None of the wallets on your account holds ${name}.`,
+  );
+  assert.equal(
+    evaluate(
+      'document.querySelector(".muse-keeper-prompt .primary").textContent',
+    ),
+    `Connect the wallet that holds ${name}`,
+  );
+  browser("click", ".muse-keeper-prompt .primary");
+  assert.deepEqual(evaluate("window.__walletLinks"), ["wallet"]);
+  evaluate("window.__hotfixMode='error'");
+  browser("click", ".muse-keeper-prompt .secondary");
+  ready(
+    `document.querySelector(".muse-keeper-prompt").textContent.includes(${JSON.stringify(ownershipUnavailableMessage)})`,
+  );
+  assert.equal(
+    evaluate(
+      'document.querySelector(".muse-keeper-prompt .primary").textContent',
+    ),
+    "Try again",
+  );
+  evaluate("window.__hotfixMode='normal'");
+  browser("click", ".muse-keeper-prompt .primary");
+  ready(
+    'document.querySelector(".muse-keeper-prompt .secondary")?.textContent==="Check again"',
+  );
+  assert.equal(evaluate("window.__hotfixReads"), initialKeeperReads + 2);
+  assert.equal(
+    evaluate(
+      'document.querySelector(".muse-keeper-prompt a").getAttribute("href")',
+    ),
+    "/muses?filter=mine",
+  );
+  noErrors();
+  passed.push(
+    "HF1: prominent visitor panel at #259, wallet login, delayed keeper status, non-keeper wallet linking, Check again, error and Try again",
+  );
+  evaluate("sessionStorage.removeItem('musecity.fixture-user')");
+  browser("open", origin + "/muses/259");
+  settleLayout();
+  browser("click", ".muse-keeper-prompt .text-link");
+  ready('sessionStorage.getItem("musecity.fixture-user")==="alice"');
+  assert.equal(
+    evaluate("location.pathname+location.search"),
+    "/muses/259",
+    "signed-out Find my muses signs in on this page",
+  );
+  evaluate("sessionStorage.removeItem('musecity.fixture-user')");
+  browser("open", origin + "/muses");
+  settleLayout();
+  evaluate(
+    `(()=>{window.__mineReads=0;const original=window.fetch;window.fetch=(input,init)=>{const url=new URL(typeof input==='string'?input:input.url,location.href);if(url.pathname==='/api/v1/muses'&&url.searchParams.get('filter')==='mine')window.__mineReads++;return original(input,init)};return true})()`,
+  );
+  browser("click", '.kind-filters a[href="/muses?filter=mine"]');
+  ready('sessionStorage.getItem("musecity.fixture-user")==="alice"');
+  assert.equal(evaluate("location.pathname+location.search"), "/muses");
+  assert.equal(
+    evaluate("window.__mineReads"),
+    0,
+    "signed-out Mine never requests a private filter",
+  );
+  noErrors();
+  passed.push(
+    "HF1/HF2: signed-out Find my muses and Mine invoke login without navigating to or requesting Mine",
+  );
+  evaluate("sessionStorage.removeItem('musecity.fixture-user')");
   browser("open", origin + "/muses/bard");
   opened = true;
   ready(
@@ -263,6 +383,12 @@ try {
     evaluate(
       'document.querySelector(".muse-posts").textContent.includes("hello, neighbors")',
     ),
+  );
+  assert.equal(
+    evaluate(
+      'document.querySelector("#muse-checklist .muse-step-title b").textContent',
+    ),
+    "Woke up",
   );
   shortEvidenceLinks();
   assert.equal(
@@ -444,23 +570,23 @@ try {
   assert.equal(evaluate('document.querySelector("#your-muses-heading")'), null);
   browser("open", origin + "/muses/1");
   ready(
-    'document.querySelector(".muse-keeper-refresh")?.textContent.includes("Recheck keeper wallet")',
+    'document.querySelector(".muse-keeper-refresh")?.textContent.includes("Check again")',
   );
   assert.equal(
     evaluate(
-      'document.querySelector(".muse-visitor-cta").textContent.includes("Sign in")',
+      'document.querySelector(".muse-keeper-prompt").textContent.includes("Sign in")',
     ),
     false,
     "signed-in non-keepers are asked to link a wallet, not sign in",
   );
   assert.ok(
     evaluate(
-      'document.querySelector(".muse-visitor-cta").textContent.includes("Link the wallet that holds it")',
+      'document.querySelector(".muse-keeper-prompt").textContent.includes("Connect the wallet that holds Bard")',
     ),
   );
   assert.equal(
     evaluate(
-      'document.querySelector(".muse-visitor-cta a").getAttribute("href")',
+      'document.querySelector(".muse-keeper-prompt a").getAttribute("href")',
     ),
     "/muses?filter=mine",
   );
@@ -744,6 +870,9 @@ try {
     'document.querySelectorAll("#muse-checklist .muse-step")[0]?.dataset.status==="done" && document.querySelectorAll("#muse-checklist .muse-step")[2]?.dataset.status==="done"',
   );
   ready(
+    'document.querySelector(".muse-live")?.textContent.includes("Woke up: done")',
+  );
+  ready(
     '!document.querySelector(".muse-start textarea")?.value.includes("mcr_")',
   );
   assert.equal(
@@ -834,13 +963,13 @@ try {
   evaluate("window.__museDeny=true");
   browser("click", ".muse-keeper-refresh");
   ready(
-    'document.body.textContent.includes("Holding Bard? Link the wallet that holds it")',
+    'document.querySelector(".muse-keeper-prompt")?.textContent.includes("Connect the wallet that holds Bard")',
   );
   assert.equal(
     evaluate(
       'document.querySelector(".muse-keeper-refresh").textContent.trim()',
     ),
-    "Recheck keeper wallet",
+    "Check again",
   );
   evaluate("window.__museDeny=false");
   browser("click", ".muse-keeper-refresh");

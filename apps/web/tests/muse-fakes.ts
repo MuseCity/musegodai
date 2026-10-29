@@ -5,7 +5,7 @@ import { ApiError } from "../src/server/errors";
 import type { MuseChain } from "../src/server/muse-chain";
 import type { MusegodServices, MuseRecord } from "../src/server/musegod";
 import type { WalletServices } from "../src/server/wallets";
-import { museContract, type PlaceId } from "../src/shared/muses";
+import { type PlaceId } from "../src/shared/muses";
 import type { fixture } from "./helpers";
 
 export const addresses = {
@@ -42,15 +42,6 @@ export function withMuses(f: ReturnType<typeof fixture>) {
     ]),
   );
   const owners = new Map([...records].map(([id, m]) => [id, m.owner]));
-  const bindings = new Map(
-    [...records].map(([id, m]) => [
-      m.agent.agentId,
-      { standard: 0, contract: museContract, tokenId: id },
-    ]),
-  );
-  const controllers = new Map<number, Set<string>>([
-    [6592, new Set([addresses.alice])],
-  ]);
   const linked = new Map<string, string[]>([
     ["did:privy:alice", [addresses.alice, addresses.external]],
     ["did:privy:bob", [addresses.bob]],
@@ -99,17 +90,8 @@ export function withMuses(f: ReturnType<typeof fixture>) {
       code: null,
     })),
   } satisfies MusegodServices;
+  const ownership = { ownerOf: vi.fn(async (id: number) => owners.get(id)!) };
   const chain = {
-    headBlock: vi.fn(async () => 10164n),
-    transferredTokens: vi.fn(
-      async (_from: bigint, _to: bigint): Promise<number[]> => [],
-    ),
-    ownerOf: vi.fn(async (id: number) => owners.get(id)!),
-    bindingOf: vi.fn(async (id: number) => bindings.get(id)!),
-    isController: vi.fn(
-      async (id: number, address: string) =>
-        controllers.get(id)?.has(address.toLowerCase()) ?? false,
-    ),
     verifyMessage: vi.fn(
       async (address: string, message: string, signature: `0x${string}`) => {
         try {
@@ -129,7 +111,7 @@ export function withMuses(f: ReturnType<typeof fixture>) {
     linkedAddresses: vi.fn(async (userId: string) => linked.get(userId) ?? []),
     balance: vi.fn(async () => 0n),
   } satisfies WalletServices;
-  Object.assign(f.services, { musegod, museChain: chain, wallets });
+  Object.assign(f.services, { musegod, museChain: chain, wallets, ownership });
   function setOwner(id: number, owner: string) {
     owners.set(id, owner);
     records.get(id)!.owner = owner;
@@ -138,11 +120,10 @@ export function withMuses(f: ReturnType<typeof fixture>) {
     ...f,
     musegod,
     chain,
+    ownership,
     wallets,
     records,
     owners,
-    bindings,
-    controllers,
     linked,
     gallery,
     week,

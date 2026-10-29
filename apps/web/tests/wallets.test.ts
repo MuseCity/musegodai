@@ -1,10 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeFunctionData, erc20Abi } from "viem";
-import {
-  linkedEvmAddresses,
-  privyWalletServices,
-  qualificationWallet,
-} from "../src/server/wallets";
+import { linkedEvmAddresses, qualificationWallet } from "../src/server/wallets";
 import { governanceRules } from "../src/shared/governance";
 import {
   transferRequest,
@@ -17,6 +13,7 @@ import {
   transactionStatus,
   switchWalletChain,
 } from "../src/components/wallet-network";
+let privyWalletServices: typeof import("../src/server/wallets").privyWalletServices;
 const owner = "0x1111111111111111111111111111111111111111";
 const recipient = "0x2222222222222222222222222222222222222222";
 const linked = {
@@ -29,6 +26,10 @@ const linked = {
   id: "local-wallet",
   address: owner,
 };
+beforeEach(async () => {
+  vi.resetModules();
+  ({ privyWalletServices } = await import("../src/server/wallets"));
+});
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -215,9 +216,57 @@ describe("wallet provenance and current on-chain qualification", () => {
     );
     expect(call.params[1]).toBe("latest");
     rpcMock(() => "0x2105");
-    await expect(service.balance(owner, governanceRules)).rejects.toMatchObject(
-      { code: "RPC_UNAVAILABLE" },
+    await expect(
+      privyWalletServices(
+        "local-app",
+        "local-secret",
+        "https://wrong-chain.example.test",
+      ).balance(owner, governanceRules),
+    ).rejects.toMatchObject({ code: "RPC_UNAVAILABLE" });
+  });
+  it("shares the cooldown and verified chain across balance service instances, and retries after ten minutes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-29T00:00:00Z"));
+    const endpoint = "https://configured.example.test/rpc";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const calls: { endpoint: string; methods: string[] }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input, init) => {
+        const requests = JSON.parse(String(init?.body));
+        calls.push({
+          endpoint: String(input),
+          methods: requests.map((r: { method: string }) => r.method),
+        });
+        if (String(input) === endpoint)
+          return new Response(null, { status: 429 });
+        return Response.json(
+          requests.map((r: { id: number; method: string }) => ({
+            jsonrpc: "2.0",
+            id: r.id,
+            result:
+              r.method === "eth_chainId"
+                ? "0x1237"
+                : "0x" + "0".repeat(63) + "7",
+          })),
+        );
+      }),
     );
+    const service = () =>
+      privyWalletServices("local-app", "local-secret", endpoint);
+    await service().balance(owner, governanceRules);
+    await service().balance(owner, governanceRules);
+    vi.setSystemTime(Date.now() + 599_999);
+    await service().balance(owner, governanceRules);
+    expect(calls.filter((r) => r.endpoint === endpoint)).toHaveLength(1);
+    expect(
+      calls.filter((r) => r.endpoint !== endpoint).map((r) => r.methods),
+    ).toEqual([["eth_chainId", "eth_call"], ["eth_call"], ["eth_call"]]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 1);
+    await service().balance(owner, governanceRules);
+    expect(calls.filter((r) => r.endpoint === endpoint)).toHaveLength(2);
+    expect(warn).toHaveBeenCalledTimes(2);
   });
   it("matches batch responses by id and rejects partial, duplicate, and rate-limited results", async () => {
     const service = privyWalletServices("local-app", "local-secret");
@@ -239,7 +288,6 @@ describe("wallet provenance and current on-chain qualification", () => {
       [chain],
       [chain, chain],
       [
-        chain,
         {
           jsonrpc: "2.0",
           id: 2,
@@ -272,10 +320,10 @@ describe("wallet provenance and current on-chain qualification", () => {
       { code: "RPC_UNAVAILABLE" },
     );
   });
-  it.each([429, 503, "network", "timeout", "code", "rpc"] as const)(
+  it.each([403, 408, 429, 503, "network", "timeout", "code", "rpc"] as const)(
     "balance falls back from configured RPC on %s",
     async (failure) => {
-      const endpoint = "https://rpc.example.test/fake-key";
+      const endpoint = "https://configured.example.test/rpc";
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       vi.stubGlobal(
         "fetch",
@@ -318,34 +366,27 @@ describe("wallet provenance and current on-chain qualification", () => {
         endpoint,
         "https://rpc.mainnet.chain.robinhood.com",
       ]);
-      expect(warn.mock.calls).toEqual([
-        [
-          JSON.stringify({
-            event: "rpc.fallback",
-            from: "configured",
-            ...(typeof failure === "number" ? { status: failure } : {}),
-            ...(failure === "code" ? { code: "ECONNRESET" } : {}),
-            ...(failure === "rpc" ? { code: 429 } : {}),
-            ...(failure === "timeout" ? { code: 23 } : {}),
-          }),
-        ],
+      expect(warn.mock.calls.map(([line]) => JSON.parse(line))).toEqual([
+        {
+          event: "rpc.fallback",
+          endpoint: "configured",
+          ...(typeof failure === "number" ? { status: failure } : {}),
+          ...(failure === "code" ? { code: "ECONNRESET" } : {}),
+          ...(failure === "rpc" ? { code: 429 } : {}),
+          ...(failure === "timeout" ? { code: 23 } : {}),
+          name: expect.any(String),
+        },
       ]);
     },
   );
 
-  it("does not fall back on non-retryable HTTP, JSON-RPC errors, malformed replies or wrong networks", async () => {
-    const endpoint = "https://rpc.example.test/fake-key";
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      for (const failure of [
-        400,
-        401,
-        403,
-        "rpc",
-        "wrong-chain",
-        "malformed",
-      ] as const) {
+  it.each([400, 401, "rpc", "wrong-chain", "malformed"] as const)(
+    "does not fall back on non-retryable failure %s",
+    async (failure) => {
+      const endpoint = "https://configured.example.test/rpc";
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
         vi.stubGlobal(
           "fetch",
           vi.fn(async () =>
@@ -380,16 +421,16 @@ describe("wallet provenance and current on-chain qualification", () => {
         expect(error).toMatchObject({ code: "RPC_UNAVAILABLE" });
         expect(String(error) + JSON.stringify(error)).not.toContain(endpoint);
         expect(fetch).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(log.mock.calls)).not.toContain(endpoint);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        log.mockRestore();
       }
-      expect(JSON.stringify(log.mock.calls)).not.toContain(endpoint);
-      expect(warn).not.toHaveBeenCalled();
-    } finally {
-      log.mockRestore();
-    }
-  });
+    },
+  );
 
-  it("keeps stable sanitized errors when both endpoints fail", async () => {
-    const endpoint = "https://rpc.example.test/fake-key";
+  it("keeps stable sanitized errors when all endpoints fail", async () => {
+    const endpoint = "https://configured.example.test/rpc";
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -410,28 +451,31 @@ describe("wallet provenance and current on-chain qualification", () => {
       expect(
         String(error) + JSON.stringify(error) + JSON.stringify(log.mock.calls),
       ).not.toContain(endpoint);
-      expect(fetch).toHaveBeenCalledTimes(2);
-      expect(log.mock.calls).toEqual([
-        [
-          JSON.stringify({
-            event: "wallet.balance.failed",
-            endpoint: "public",
-            causes: [{ name: "TypeError" }],
-          }),
-        ],
+      expect(fetch).toHaveBeenCalledTimes(4);
+      expect(log.mock.calls.map(([line]) => JSON.parse(line))).toEqual([
+        {
+          event: "rpc.failed",
+          attempts: ["configured", "public-1", "public-2", "public-3"].map(
+            (endpoint) => ({ endpoint, name: "TypeError" }),
+          ),
+        },
       ]);
-      expect(warn.mock.calls).toEqual([
-        [JSON.stringify({ event: "rpc.fallback", from: "configured" })],
-      ]);
+      expect(warn.mock.calls.map(([line]) => JSON.parse(line))).toEqual(
+        ["configured", "public-1", "public-2", "public-3"].map((endpoint) => ({
+          event: "rpc.fallback",
+          endpoint,
+          name: "TypeError",
+        })),
+      );
     } finally {
       log.mockRestore();
     }
   });
 
   it.each(["configured", "public"] as const)(
-    "retains at most five sanitized causes for a failed %s endpoint",
+    "flattens bounded sanitized causes for a failed %s endpoint",
     async (endpoint) => {
-      const secret = "https://rpc.example.test/fake-key";
+      const secret = "https://configured.example.test/rpc";
       const log = vi.spyOn(console, "error").mockImplementation(() => {});
       const metadata = [
         { name: "Error", status: 401, code: -32602 },
@@ -457,20 +501,18 @@ describe("wallet provenance and current on-chain qualification", () => {
           endpoint === "configured" ? secret : undefined,
         ).balance(owner, governanceRules),
       ).rejects.toMatchObject({ status: 503, code: "RPC_UNAVAILABLE" });
-      expect(log.mock.calls).toEqual([
-        [
-          JSON.stringify({
-            event: "wallet.balance.failed",
-            endpoint,
-            causes: [
-              metadata[0],
-              metadata[1],
-              metadata[2],
-              { name: "Error" },
-              metadata[4],
-            ],
-          }),
-        ],
+      expect(log.mock.calls.map(([line]) => JSON.parse(line))).toEqual([
+        {
+          event: "rpc.failed",
+          attempts: [
+            {
+              endpoint: endpoint === "public" ? "public-1" : "configured",
+              status: 401,
+              code: -32602,
+              name: "Error",
+            },
+          ],
+        },
       ]);
       expect(fetch).toHaveBeenCalledTimes(1);
       expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
@@ -483,7 +525,7 @@ describe("wallet provenance and current on-chain qualification", () => {
       r.method === "eth_chainId" ? "0x1237" : "0x" + "0".repeat(64),
     );
     for (const endpoint of [
-      "https://rpc.example.test/fake-key",
+      "https://configured.example.test/rpc",
       "http://rpc.example.test",
     ]) {
       expect(
@@ -495,7 +537,7 @@ describe("wallet provenance and current on-chain qualification", () => {
       ).toBe(0n);
     }
     expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
-      "https://rpc.example.test/fake-key",
+      "https://configured.example.test/rpc",
       "https://rpc.mainnet.chain.robinhood.com",
     ]);
     expect(warn).not.toHaveBeenCalled();

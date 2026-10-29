@@ -8,7 +8,7 @@ import {
   type AgentView,
   type AgentConnectionStatus,
 } from "../shared/contracts";
-import type { AgentRow } from "./schema";
+import type { AccountRow, AgentRow } from "./schema";
 import { bindRedeemedAgent } from "./muse-bindings";
 type Registration = {
   id: string;
@@ -414,6 +414,45 @@ export async function ownAgent(db: Database, a: Actor, agentId: string) {
   requireValue(agent, 404, "NOT_FOUND", "Agent not found.");
   return agent;
 }
+// Server-internal revocation; callers run inside a transaction. Authentication
+// re-reads these rows on every REST/MCP request, including cached write retries.
+async function revokeAccess(db: Database, agentId: string) {
+  await db.query(
+    "UPDATE musecity.credentials SET revoked_at=now() WHERE agent_id=$1 AND revoked_at IS NULL",
+    [agentId],
+  );
+  await db.query(
+    "UPDATE musecity.oauth_grants SET revoked_at=now() WHERE agent_id=$1",
+    [agentId],
+  );
+  await db.query(
+    `UPDATE musecity.oauth_requests r SET status='denied' WHERE r.status='approved' AND EXISTS(
+    SELECT 1 FROM musecity.oauth_grants g WHERE g.agent_id=$1 AND g.owner_account_id=r.owner_account_id AND g.client_id=r.client_id)`,
+    [agentId],
+  );
+}
+export async function revokeAgent(
+  db: Database,
+  accountId: string,
+  agentId: string,
+) {
+  const account = await db.one<AccountRow>(
+    "SELECT * FROM musecity.accounts WHERE id=$1 FOR UPDATE",
+    [accountId],
+  );
+  requireValue(account, 404, "NOT_FOUND", "Account not found.");
+  const a: Actor = { account, agent: null, key: account.id };
+  const agent = await ownAgent(db, a, agentId);
+  await db.query("UPDATE musecity.agents SET status='revoked' WHERE id=$1", [
+    agentId,
+  ]);
+  await revokeAccess(db, agentId);
+  await db.query(
+    "UPDATE musecity.registrations SET status='cancelled',token_hash=$2 WHERE agent_id=$1 AND status<>'activated'",
+    [agentId, await digest(secret("mcr"))],
+  );
+  if (agent.status !== "revoked") await audit(db, a, "agent.revoke", agentId);
+}
 export async function changeAgent(
   db: Database,
   a: Actor,
@@ -433,6 +472,10 @@ export async function changeAgent(
     "AGENT_REVOKED",
     "Revocation is permanent. Create a new invitation.",
   );
+  if (action === "revoke") {
+    await revokeAgent(db, a.account.id, agentId);
+    return agentView(await ownAgent(db, a, agentId));
+  }
   if (action === "edit")
     await db.query(
       "UPDATE musecity.agents SET name=$2,scopes=$3,public_visible=$4,description=$5 WHERE id=$1",
@@ -444,36 +487,18 @@ export async function changeAgent(
         input?.description ?? agent.description,
       ],
     );
-  else if (["pause", "resume", "revoke"].includes(action))
+  else if (["pause", "resume"].includes(action))
     await db.query("UPDATE musecity.agents SET status=$2 WHERE id=$1", [
       agentId,
-      (
-        { pause: "paused", resume: "active", revoke: "revoked" } as Record<
-          string,
-          string
-        >
-      )[action],
+      ({ pause: "paused", resume: "active" } as Record<string, string>)[action],
     ]);
-  if (["revoke", "rotate"].includes(action)) {
-    await db.query(
-      "UPDATE musecity.credentials SET revoked_at=now() WHERE agent_id=$1 AND revoked_at IS NULL",
-      [agentId],
-    );
-    await db.query(
-      "UPDATE musecity.oauth_grants SET revoked_at=now() WHERE agent_id=$1",
-      [agentId],
-    );
-  }
+  if (action === "rotate") await revokeAccess(db, agentId);
   await audit(db, a, "agent." + action, agentId);
   const oauthAgent = await db.one<{ id: string }>(
     "SELECT id FROM musecity.oauth_grants WHERE agent_id=$1",
     [agentId],
   );
-  if (
-    oauthAgent &&
-    (["revoke", "rotate"].includes(action) ||
-      (action === "edit" && input?.scopes))
-  )
+  if (oauthAgent && action === "edit" && input?.scopes)
     await db.query(
       `UPDATE musecity.oauth_requests r SET status='denied' WHERE r.status='approved' AND EXISTS(
       SELECT 1 FROM musecity.oauth_grants g WHERE g.agent_id=$1 AND g.owner_account_id=r.owner_account_id AND g.client_id=r.client_id)`,
