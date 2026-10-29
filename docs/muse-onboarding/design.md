@@ -235,6 +235,15 @@ The existing `agents` table gets no new columns; `muse_bindings` says which Agen
 - **Agent id.** Read `agent.agentId` from musegod.org once per token and confirm it on chain through the adapter's ERC-8217 `bindingOf(uint256) returns (uint8, address, uint256)`, which must return (0, Muses, token id). Checked live on 2026-10-29: `bindingOf(6592)` returns (0, `0x13Ea…9836`, 1), and `isController(6592, holder)` is true while a stranger's is false. Bindings are immutable, so store it in `muse_bindings.agent_id_8004` and never re-read it.
 - **Authorization** (start, signing, Agent reports): the server checks on chain, through `ROBINHOOD_RPC_URL` and reusing the RPC code in `wallets.ts`, that one of the account's linked EVM addresses passes `isController(agentId, address)`. The result is cached 60 seconds per token.
 - **Ending a binding.** The binding ends as `transferred` when `ownerOf` is none of: the binding's `holder_address`, any address linked to the account, or the muse's registered agent wallet (`agent.wallet`).
+- **When it is checked.** On access (public page, keeper page, start, restart), using musegod.org's `owner` as a hint and the chain to confirm. Also on a schedule, so muses nobody visits still reset (Transfer sweep, below). Every action that has an effect re-checks control on chain regardless, so a stale binding never grants anything.
+- **RPC** (owner rule, 2026-10-29). Every server-side Robinhood read, the existing governance balance check included, uses the configured Alchemy `ROBINHOOD_RPC_URL` first, and falls back to the public Robinhood RPC (`https://rpc.mainnet.chain.robinhood.com`) on a 429, a 5xx, a timeout or a network error. On 2026-10-29 the configured Alchemy endpoint answered 429 "Monthly capacity limit exceeded", while the public RPC answered `eth_getLogs` over 100,000 blocks without error.
+
+**Transfer sweep** (owner decision 2026-10-29: add a 15-minute scheduled check)
+
+- A Cron Trigger `*/15 * * * *` in `wrangler.jsonc` runs the Worker's `scheduled` handler. Its cost is within the included Workers quotas on either plan (about 2,900 runs a month).
+- State: table `muse_sweep` with one row (`id = 'transfers'`, `last_block`, `updated_at`).
+- Each run takes `pg_try_advisory_lock`; when another run holds it, the run exits. Robinhood Chain makes a block about every 0.1 s (about 8,600 per 15 minutes). The head is the latest block minus 64. With no state row, the run checks every active binding once and stores the head. Otherwise it reads Muses `Transfer` logs from `last_block + 1` in chunks of 10,000 blocks, at most 12 chunks per run. For each transferred token with an active binding, it applies the same rule as **Ending a binding**, using current `ownerOf`, not the log's `to`. It then advances `last_block` to the chunk's end.
+- Any RPC or musegod.org failure stops the run without moving `last_block`, so the next run retries the same range and no transfer is missed. The work is almost all I/O wait, which suits the Workers Free plan's 10 ms CPU per run.
 - **Display only** (Mine in the directory, `Find my muses`): musegod.org's `owner` field, confirmed on chain when the keeper opens a muse.
 - `wallets.ts` currently takes only the index-0 embedded wallet. It needs to read every linked EVM address, used only on muse paths.
 
@@ -281,7 +290,7 @@ MCP gains `get_muse_setup` and `report_muse_step`, matching the two Agent endpoi
 | Code expired or used | The existing pending / expired / connected states; a new code is one click |
 | The AI cannot open links | `copy the full setup` copies the full start.md text with the code |
 | One keeper, several muses | One code and one Agent per muse. The start card notes that a Meta Muse has one name and one look, and suggests side chats or another AI for the rest. Step 2 can be marked skipped (shown as skipped, not counted) |
-| Sale | The new keeper starts from 0. The old binding ends. The old Agent loses its muse badge but stays the previous keeper's ordinary Agent, and its posts remain. Places with `current:false` on musegod.org are labeled "from Bard's last keeper" |
+| Sale | Within 15 minutes (the Transfer sweep), or sooner on the next visit, the new keeper starts from 0. The old binding ends. The old Agent loses its muse badge but stays the previous keeper's ordinary Agent, and its posts remain. Places with `current:false` on musegod.org are labeled "from Bard's last keeper" |
 | Places linked by the previous keeper | Not counted toward the new keeper's progress; the row says `link it again to make it yours` |
 | Relay rate-limited | The line waits in the queue; the Needs you row says `sending…`; after 10 minutes it says `sign again` |
 | musegod.org unavailable | Serve the stale cache with its time; queued lines retry within their window |
@@ -331,6 +340,7 @@ MCP gains `get_muse_setup` and `report_muse_step`, matching the two Agent endpoi
 | AC13 | No horizontal scroll at 375px; narrow order is start card → Needs you → checklist; every button works from the keyboard; contrast meets WCAG AA; reduced motion is respected |
 | AC14 | No text in start.md, the page or any response asks for a private key, seed phrase, password or the flock join code, and start.md tells the AI to keep its secrets in its credential store |
 | AC15 | The new pure functions (status derivation, name slugs, line templates, keeper decision, relay budget) have unit tests; a test asserts the 999 slugs are unique; `tests/*.test.ts` and the e2e verify scripts all pass |
+| AC16 | A transfer of a bound muse ends its binding by the next sweep even when nobody opens its page; a failed RPC leaves `last_block` unchanged; overlapping runs never process the same range twice; chain reads fall back to the public RPC when the configured one answers 429 |
 
 ## 12. Owner decisions (2026-10-29)
 

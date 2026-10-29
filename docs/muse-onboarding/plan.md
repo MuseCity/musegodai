@@ -399,6 +399,56 @@ Rules:
 
 ---
 
+### Task 8A: RPC fallback and the 15-minute Transfer sweep
+
+Owner rule (2026-10-29): every server-side Robinhood read uses the configured Alchemy `ROBINHOOD_RPC_URL` first, and the public RPC only when that fails.
+
+**Files:**
+- Create: `W/src/server/rpc.ts` — `robinhoodEndpoints(rpcUrl?: string): string[]` returns `[configured, public]`, de-duplicated, HTTPS only (a non-HTTPS configured URL is dropped, not fatal); `retryableRpc(error: unknown): boolean` is true for HTTP 429, 5xx, timeouts and network errors.
+- Modify: `W/src/server/wallets.ts` `balance()` — try each endpoint from `robinhoodEndpoints` in order, moving to the next only when `retryableRpc` says so; keep the chain-id check and the existing error message. This repairs today's governance balance checks while Alchemy answers 429.
+- Modify: `W/src/server/muse-chain.ts` (viem `fallback(robinhoodEndpoints(rpcUrl).map(url => http(url, …)))`, falling back on the same conditions; new methods below)
+- Create: `W/migrations/0015_muse_sweep.sql` (`musecity.muse_sweep(id text PRIMARY KEY CHECK (id='transfers'), last_block bigint NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())`, revoke/grant like 0014); `W/src/server/schema.ts` entry
+- Create: `W/src/server/muse-sweep.ts`
+- Modify: `W/src/server/muses.ts` (export the transfer rule, below, and use it from `currentBinding`)
+- Modify: `W/workers/app.ts` (add `async scheduled(controller, env, ctx)` that runs `ctx.waitUntil(sweepMuseTransfers(...))` with `productionServices(env, ctx)`), `W/wrangler.jsonc` (`"triggers": { "crons": ["*/15 * * * *"] }`)
+- Test: `W/tests/muse-sweep.test.ts`, `W/tests/rpc.test.ts`; extend `W/tests/muse-chain.test.ts` and `W/tests/wallets.test.ts`
+
+**Interfaces — Produces:**
+
+```ts
+// rpc.ts
+export const publicRobinhoodRpc = "https://rpc.mainnet.chain.robinhood.com";
+export function robinhoodEndpoints(rpcUrl?: string): string[];
+export function retryableRpc(error: unknown): boolean;
+// MuseChain additions
+headBlock(): Promise<bigint>;                                        // latest block number
+transferredTokens(fromBlock: bigint, toBlock: bigint): Promise<number[]>; // distinct token ids from Muses Transfer logs
+// muses.ts
+export async function endIfTransferred(db: Database, deps: MuseDeps, binding: MuseBindingRow, agentWallet: string | null): Promise<boolean>; // true when it ended the binding
+// muse-sweep.ts
+export const sweepChunk = 10_000n, sweepMaxChunks = 12, sweepSafety = 64n;
+export async function sweepMuseTransfers(connectionString: string, deps: MuseDeps): Promise<{ skipped: boolean; from: string | null; to: string | null; ended: number }>;
+```
+
+Rules: spec §7 "Transfer sweep". The run takes `pg_try_advisory_lock(624139189)` on its own connection and exits with `skipped: true` when it cannot get it. The head is `headBlock() - sweepSafety`. With no state row, every active binding gets `endIfTransferred` once, and then the head is stored. Each chunk runs `transferredTokens`, then `endIfTransferred` for each token with an active binding (agent wallet from `musegod.muse(id)`), then advances `last_block`, in one transaction per chunk. Any error stops the run, leaves `last_block` where it was, and is logged without the RPC URL.
+
+- [ ] **Step 1: Write the failing tests**
+  - `muse-chain`: with the configured endpoint answering 429, `ownerOf` is served by the public RPC; with both failing → `RPC_UNAVAILABLE`. An error never contains the configured URL. `transferredTokens` decodes two Transfer logs for tokens 1 and 1 → `[1]`.
+  - `wallets` (extend `tests/wallets.test.ts`): `balance()` with the configured endpoint answering 429 returns the public RPC's balance; a configured 400-class JSON-RPC error other than 429 does not fall back; both failing keep today's `RPC_UNAVAILABLE`/`WALLET_UNAVAILABLE` behavior; a non-HTTPS configured URL goes straight to the public RPC.
+  - `rpc`: `robinhoodEndpoints("https://a")` → `["https://a", public]`; `robinhoodEndpoints(public)` → `[public]`; `robinhoodEndpoints(undefined)` → `[public]`.
+  - `first run initializes and checks every binding` — no state row, bindings for tokens 1 and 2, fake owner of 2 is a stranger → binding 2 `transferred`, binding 1 kept, `last_block = head - 64`.
+  - `ends a transferred binding nobody visited` — state at block 100, fake logs show token 1 in (101, 10100], owner now a stranger → binding ended; `last_block = 10100`; token 7 in the logs (unbound) is ignored.
+  - `keeps a move into the muse's own wallet` — owner equals `agent.wallet` → binding kept.
+  - `chunks and caps a long backlog` — head 200,000 blocks ahead → 12 chunks this run, `last_block` advanced 120,000; the next run continues from there.
+  - `retries the same range after a failure` — `transferredTokens` throws on the second chunk → `last_block` stays at the end of the first chunk.
+  - `never runs twice at once` — two concurrent runs → one returns `skipped: true`.
+- [ ] **Step 2: Run** `corepack pnpm vitest run tests/muse-sweep.test.ts tests/muse-chain.test.ts` — Expected: FAIL.
+- [ ] **Step 3: Implement; run** `corepack pnpm db:migrate`.
+- [ ] **Step 4: Run** the same tests, then `tests/muses.test.ts` — Expected: PASS. Run `corepack pnpm typecheck` (it regenerates Worker types for the `scheduled` handler) — Expected: clean.
+- [ ] **Step 5: Commit** `git commit -m "Fall back to the public Robinhood RPC and reset transferred muses every 15 minutes"`.
+
+---
+
 ### Task 9: The AI's skill document
 
 **Files:**
