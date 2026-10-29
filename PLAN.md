@@ -1,12 +1,30 @@
 # musegod.ai implementation and verification
 
-## OpenSea ownership and RPC resilience hotfix — local verification (2026-10-29)
+## Muse keeper prompt, OpenSea ownership and public guide — production releases (2026-10-29)
 
-Implemented the owner decisions in `docs/muse-onboarding/design.md` without rewriting its Keeper / Keeper checks / Ownership sweep sections. Keeper access now uses the current OpenSea NFT owner and the active-binding agent-wallet exception; transfers revoke the bound Agent, credentials and OAuth grants while retaining posts. EOA signatures recover locally; ERC-1271 and governance retain the ordered four-endpoint RPC fallback, per-endpoint cooldown and sanitized diagnostics. The owner sweep checks active bindings sequentially under per-token transaction locks; migration `0016_drop_muse_sweep.sql` removes the retired Transfer cursor. The UI shows “Woke up” and the actionable ownership-unavailable message.
+**Trigger.** After the first release, a signed-in holder on `/muses/259` saw no keeper prompt. Production logs showed `GET /api/v1/me/muses/259` returning 503 `RPC_UNAVAILABLE` after `rpc.fallback` (configured Alchemy 429), and the 13:45 sweep failed the same way. The configured Alchemy key is over its monthly capacity, and the public RPC then failed inside the Worker. The keeper area also rendered nothing while loading and only a muted link for non-keepers.
 
-Local verification: **457 tests / 39 files passed**, plus typecheck (Wrangler-generated Env includes `OPENSEA_API_KEY`), `format:check`, `guard` and browser-script syntax. `db:migrate` verified only the isolated `musecity`, `musecity_test` and `musecity_e2e` targets at `127.0.0.1:65433`. Chrome DevTools against `e2e:serve` verified the first-step copy, ownership error mapping, retry recovery and 375px layout with synthetic ownership/identity/wallet services. The standalone browser script remains uncompleted because its Chrome launcher/CDP attachment is blocked in this sandbox. No real OpenSea/Alchemy request, wallet proof, production migration, deployment, commit or push is claimed. Ignored verification logs, file manifest and report are under `apps/web/.local/ownership-*`.
+**Owner decisions.** Whoever holds the NFT controls its Agent; a transfer revokes the former holder's Agent. Ownership comes from the OpenSea API (`OPENSEA_API_KEY`) instead of Adapter8004 `isController`; delegates are not keepers; the move into the muse's own agent wallet stays an exception. The first step reads "Woke up". The "Wake up" guide is public on unstarted muses, and the Muse invite code `4ZSR0R` is visible to everyone (guide, started muse pages, `/muses`).
 
-Production still requires the server-only `OPENSEA_API_KEY` and migration 0016 under separate release authorization. Before rolling back to the prior Worker after dropping the cursor, restore its table definition from immutable migration 0015. Preserve all Agent/credential/OAuth revocations.
+**What changed** (Codex `gpt-6.1-sol` implemented; Claude reviewed, tested and committed):
+- Keeper prompt under the progress bar for every state (signed out: Connect wallet; checking; not keeper: connect the holding wallet / Check again; errors with Try again); the bottom visitor card is gone; Mine asks signed-out visitors to sign in.
+- OpenSea ownership client (60 s Cache API, 5 s timeout, `api.opensea.io` only, key never logged or cached); keeper authorization, signatures and Agent reports use the OpenSea owner; public reads skip Privy unless the owner changed and stay up when OpenSea fails.
+- Transfer ends the binding and revokes the Agent (status, credentials, OAuth grants, pending registration) through the shared revoke path; posts stay.
+- 15-minute ownership sweep over active bindings (≤4 OpenSea requests/s, per-token transaction locks); the Transfer-log RPC sweep and its cursor are removed (`0016_drop_muse_sweep.sql`).
+- EOA signatures verify locally; ERC-1271 and governance balance checks use the RPC list configured Alchemy → official public → dRPC → publicnode, with JSON-RPC rate-limit codes and 403/408/429/5xx treated as retryable, 10-minute per-endpoint cooldowns and sanitized `rpc.fallback` / `rpc.failed` logs.
+- Public "Wake up" guide with a placeholder code for non-keepers (no code request), and a shared `MuseInvite` block.
+
+**Verification.** Final commit `36b3c05`: 39 test files / 467 tests passed, typecheck, `format:check`, `guard`, `guard:deployment` and build passed; Chrome DevTools checks against the local fixture server covered all viewer states at 375 px. The standalone `e2e/verify-muses-browser.mjs` run still cannot launch Chrome in the implementer's sandbox.
+
+**Releases.**
+1. `OPENSEA_API_KEY` was set as a Worker secret from the ignored root `.env` (version `33862462-2247-4e94-aee7-08a3cf4bdfb2`, code unchanged).
+2. Worker **`08e30268-6b73-496e-b081-12a15694ae88`** (tag `hotfix-40cce89`) at **14:56:37 UTC**; then `0016_drop_muse_sweep.sql` (`58a5835e37f0f02645cb89fd6d7533c8a03c81b561ede840d289e01669da2cb1`) dropped the one-row cursor table; existing counts unchanged (5 accounts, 3 Agents, 0 bindings, 5 posts).
+3. Worker **`5dd70ce6-ccc8-42bf-b0fd-4e1f9b912569`** (tag `guide-36b3c05`) at **15:51:44 UTC**.
+Each release: secret scan with zero matches (583–584 files), bindings and settings unchanged apart from the new secret, cron `*/15 * * * *` registered, 11 read-only production checks passed and 999 sitemap muse pages. A signed-out browser check of `/muses/259` showed the full guide, one invite code, the `<your code>` placeholder and no real code; `/muses` shows the invite block. OpenSea answered owners for muses #1 and #259 matching the chain.
+
+**Rollback** from `apps/web`: `corepack pnpm exec wrangler rollback 08e30268-6b73-496e-b081-12a15694ae88 --config build/server/wrangler.json` undoes only the guide release. Rolling back further, to `33862462…` or `deb2067f…`, needs the cursor table from immutable migration 0015 restored first, because those versions' sweep expects it. Keep every Agent, credential and OAuth revocation.
+
+**Not verified:** a real holder's full Meta Muse run, in-page signing and relay to musegod.org, and a sweep that ends a real binding (production has no bindings yet).
 
 ## MUSEGOD muse onboarding — implementation and production release (2026-10-29)
 
