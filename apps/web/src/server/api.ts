@@ -90,6 +90,8 @@ import { openapi, skill } from "./discovery";
 import { handleMcp } from "./mcp";
 import * as oauth from "./oauth";
 import { chatgptFile, importChatgptImage } from "./chatgpt-media";
+import { musegodOrg, type MusegodServices } from "./musegod";
+import { robinhoodMuseChain, type MuseChain } from "./muse-chain";
 export type Services = {
   connectionString: string;
   store: ObjectStore;
@@ -97,6 +99,9 @@ export type Services = {
   origin: string;
   images?: ImageServices;
   wallets?: WalletServices;
+  musegod?: MusegodServices;
+  museChain?: MuseChain;
+  waitUntil?: (p: Promise<unknown>) => void;
   verifyWebsite?: WebsiteVerifier;
 };
 export const productionServices = (
@@ -113,6 +118,16 @@ export const productionServices = (
     env.PRIVY_APP_SECRET,
     env.ROBINHOOD_RPC_URL,
   ),
+  musegod: musegodOrg({
+    cache: {
+      match: async (request) =>
+        (await caches.open("musecity-musegod-v1")).match(request),
+      put: async (request, response) =>
+        (await caches.open("musecity-musegod-v1")).put(request, response),
+    },
+  }),
+  museChain: robinhoodMuseChain(env.ROBINHOOD_RPC_URL),
+  waitUntil: (promise) => ctx.waitUntil(promise),
   images: {
     process: cloudflareImages(env.IMAGES),
     cache: {

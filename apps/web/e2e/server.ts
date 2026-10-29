@@ -48,6 +48,10 @@ const api = createApi({
   verifyWebsite: fixtureWebsiteVerifier(local.e2eUrl),
   images: { process: localImageProcessor, origin: "http://127.0.0.1:5191" },
   wallets: {
+    linkedAddresses: async (userId) => {
+      const address = fixtureAddresses[userId.replace("did:privy:", "")];
+      return address ? [address] : [];
+    },
     findWallet: async (userId) => {
       const name = userId.replace("did:privy:", ""),
         address = fixtureAddresses[name];

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { decodeFunctionData, erc20Abi } from "viem";
 import {
+  linkedEvmAddresses,
   privyWalletServices,
   qualificationWallet,
 } from "../src/server/wallets";
@@ -66,6 +67,91 @@ function rpcMock(
   );
 }
 describe("wallet provenance and current on-chain qualification", () => {
+  it("keeps all verified top-level linked EVM wallets separately from qualification", () => {
+    const external = "0xaabbccddeeff00112233445566778899aabbccdd";
+    expect(
+      linkedEvmAddresses(
+        {
+          id: "did:privy:alice",
+          linked_accounts: [
+            linked,
+            {
+              type: "wallet",
+              chain_type: "ethereum",
+              connector_type: "injected",
+              address: "0x" + external.slice(2).toUpperCase(),
+            },
+            { type: "wallet", chain_type: "ethereum", address: external },
+            {
+              type: "wallet",
+              chain_type: "ethereum",
+              connector_type: "delegate",
+              address: recipient,
+            },
+            { ...linked, chain_type: "solana" },
+            { type: "email", address: external },
+            { type: "cross_app", embedded_wallets: [linked] },
+            { type: "wallet", chain_type: "ethereum", address: "invalid" },
+            null,
+            "wallet",
+          ],
+        },
+        "did:privy:alice",
+      ),
+    ).toEqual([owner, external, recipient]);
+  });
+  it("rejects linked wallet identity mismatches with the existing stable error", () => {
+    expect(() =>
+      linkedEvmAddresses(
+        { id: "did:privy:bob", linked_accounts: [linked] },
+        "did:privy:alice",
+      ),
+    ).toThrowError(
+      expect.objectContaining({ status: 503, code: "WALLET_UNAVAILABLE" }),
+    );
+  });
+  it("reads linked addresses through the existing verified Privy user API", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          id: "did:privy:alice",
+          linked_accounts: [
+            linked,
+            { type: "wallet", chain_type: "ethereum", address: recipient },
+          ],
+        }),
+      ),
+    );
+    const services = privyWalletServices("local-app", "local-secret");
+    expect(await services.linkedAddresses("did:privy:alice")).toEqual([
+      owner,
+      recipient,
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const input = vi.mocked(fetch).mock.calls[0]![0];
+    const url = input instanceof Request ? input.url : String(input);
+    expect(new URL(url).pathname).toBe("/v1/users/did:privy:alice");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ id: "did:privy:bob", linked_accounts: [linked] }),
+      ),
+    );
+    await expect(
+      services.linkedAddresses("did:privy:alice"),
+    ).rejects.toMatchObject({ status: 503, code: "WALLET_UNAVAILABLE" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("offline");
+      }),
+    );
+    await expect(
+      services.linkedAddresses("did:privy:alice"),
+    ).rejects.toMatchObject({ status: 503, code: "WALLET_UNAVAILABLE" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it("accepts only the app-scoped non-imported primary embedded EVM wallet", () => {
     const user = (wallet: unknown) => ({
       id: "did:privy:alice",

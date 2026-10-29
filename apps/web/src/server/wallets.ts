@@ -19,6 +19,7 @@ import { ApiError, requireValue } from "./errors";
 export type VerifiedWallet = NonNullable<Membership["wallet"]>;
 export type WalletServices = {
   findWallet: (privyUserId: string) => Promise<VerifiedWallet | null>;
+  linkedAddresses: (privyUserId: string) => Promise<string[]>;
   balance: (address: string, rules: GovernanceRules) => Promise<bigint>;
 };
 
@@ -64,12 +65,54 @@ export function qualificationWallet(
     : null;
 }
 
+export function linkedEvmAddresses(
+  user: { id: string; linked_accounts: unknown[] },
+  userId: string,
+): string[] {
+  requireValue(
+    user.id === userId,
+    503,
+    "WALLET_UNAVAILABLE",
+    "Could not verify your wallet ownership.",
+  );
+  const addresses = new Set<string>();
+  for (const value of user.linked_accounts) {
+    if (!value || typeof value !== "object") continue;
+    const wallet = value as Record<string, unknown>;
+    if (
+      wallet.type === "wallet" &&
+      wallet.chain_type === "ethereum" &&
+      typeof wallet.address === "string" &&
+      isAddress(wallet.address)
+    )
+      addresses.add(wallet.address.toLowerCase());
+  }
+  return [...addresses];
+}
+
 export function privyWalletServices(
   appId: string,
   appSecret: string,
   rpcUrl?: string,
 ): WalletServices {
   return {
+    async linkedAddresses(userId) {
+      try {
+        const client = new PrivyClient({
+          appId,
+          appSecret,
+          timeout: 8000,
+          maxRetries: 0,
+        });
+        return linkedEvmAddresses(await client.users()._get(userId), userId);
+      } catch {
+        throw new ApiError(
+          503,
+          "WALLET_UNAVAILABLE",
+          "Linked wallet verification is unavailable. Please retry.",
+        );
+      }
+    },
     async findWallet(userId) {
       try {
         const client = new PrivyClient({

@@ -28,6 +28,8 @@ function setup() {
     },
   );
   f.services.wallets = {
+    linkedAddresses: async (user) =>
+      addresses.has(user) ? [addresses.get(user)!] : [],
     findWallet: async (user) =>
       addresses.has(user)
         ? { id: "wallet:" + user, address: addresses.get(user)! }
