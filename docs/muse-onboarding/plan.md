@@ -474,6 +474,7 @@ Behavior:
 
 Behavior:
 - `GET /me/muses/:id` with 403 `NOT_MUSE_KEEPER` → show `Holding Bard? Link the wallet that holds it` calling `session.link("wallet")`.
+- When the keeper's account has no `joinedAt`, the start card adds a non-blocking note `Finish your profile so Bard's card and posts show on its page` linking to `/move-in` (design §8).
 - `agentLimitReached` → the start card shows "Your account has 20 Agents. Remove one in My agents to wake Bard." with a link to `/me/agents`, and no copy button.
 - Start card: spec §6.2 steps 1–3. "Copy" runs `POST start` once and copies `StartResult.line`; the code is kept only in component state. "copy the full setup" fetches `/muses/<id>/start.md` and copies it followed by a blank line and `Your code: <otp>`; it reuses the current code, or runs start first if there is none. Polling every 5 s while visible, stopped on error, with manual refresh, exactly as `agent-connection.tsx:110-127`. Expired code → "new code".
 - Needs you: the rows of spec §6.2 from `NeedsYou`. `Sign N` signs each `PendingLine` in order with `session.signMessage(controller, line.line)`, posting each to `/signatures`. The controller is the first of `session.evmAddresses` that is in `KeeperView.controllers`; with none → `Switch to the wallet that holds Bard (<short owner>)`. Show "sending…" for `sending`, and "sign again" for `expired`.
